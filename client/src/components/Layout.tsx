@@ -45,9 +45,8 @@ const ThemeContext = createContext<{ theme: string; toggle: () => void }>({
 });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<string>(() => {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-  });
+  // Default to light mode on every page (ignore OS preference)
+  const [theme, setTheme] = useState<string>('light');
 
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark';
@@ -55,9 +54,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle('dark', next === 'dark');
   };
 
-  // Apply on mount
+  // Force-clear any 'dark' class set previously and apply current theme
   useState(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.classList.remove('dark');
+    if (theme === 'dark') document.documentElement.classList.add('dark');
   });
 
   // Global branding state
@@ -153,19 +153,17 @@ export function Sidebar({ collapsed, onCollapse, onBackToPortal, onLogout }: Sid
           'flex items-center gap-3 px-4 py-4 border-b border-sidebar-border min-h-[60px]',
           collapsed && 'justify-center px-2'
         )}>
-          <svg viewBox="0 0 32 32" fill="none" aria-label="Transcend" className="w-7 h-7 shrink-0">
-            <rect width="32" height="32" rx="6" fill="#3B82F6" />
-            <rect x="7" y="18" width="4" height="8" fill="white" />
-            <rect x="14" y="12" width="4" height="14" fill="white" opacity="0.85" />
-            <rect x="21" y="6" width="4" height="20" fill="white" opacity="0.7" />
-            <path d="M7 18 L16 10 L25 4" stroke="white" strokeWidth="1.5" strokeLinecap="round" opacity="0.5" />
-          </svg>
-          {!collapsed && (
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-white leading-tight">Transcend</p>
-              <p className="text-[10px] text-sidebar-foreground/60 leading-tight">Client Dashboard</p>
-            </div>
-          )}
+          {/* Transwestern logo */}
+          <img
+            src="/transwestern-logo.png"
+            alt="Transwestern"
+            className={cn(
+              'shrink-0 object-contain',
+              collapsed ? 'h-7 w-7' : 'h-8 w-auto max-w-[160px]'
+            )}
+            style={collapsed ? { objectPosition: 'left center', clipPath: 'inset(0 78% 0 0)' } : undefined}
+          />
+          {!collapsed && <div className="flex-1" />}
           {!collapsed && (
             <button
               onClick={() => onCollapse(true)}

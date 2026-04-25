@@ -1051,12 +1051,24 @@ const defaultIcon = L.icon({
 L.Marker.prototype.options.icon = defaultIcon;
 
 // Custom colored icons per status
-const statusMarkerColors: Record<string, string> = {
+const DEFAULT_STATUS_MARKER_COLORS: Record<string, string> = {
   'Active Initiative':  '#3B82F6',
   'Active Disposition': '#F59E0B',
   'Inactive':           '#94A3B8',
   'Archive':            '#6B7280',
 };
+
+// Curated palette of swatches for map icon customization
+const MAP_ICON_PALETTE = [
+  '#3B82F6', '#2563EB', '#1D4ED8',
+  '#10B981', '#059669', '#16A34A',
+  '#F59E0B', '#F97316', '#EA580C',
+  '#EF4444', '#DC2626', '#B91C1C',
+  '#8B5CF6', '#7C3AED', '#A855F7',
+  '#EC4899', '#DB2777', '#06B6D4',
+  '#14B8A6', '#84CC16', '#94A3B8',
+  '#64748B', '#475569', '#1F2937',
+];
 
 function createColoredIcon(color: string) {
   return L.divIcon({
@@ -1085,7 +1097,7 @@ function FitBoundsHelper({ positions }: { positions: [number, number][] }) {
   return null;
 }
 
-function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey' }: { leases: LeaseRecord[]; onViewProfile: (id: number) => void; mapStyle?: 'grey' | 'light' }) {
+function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey', statusColors }: { leases: LeaseRecord[]; onViewProfile: (id: number) => void; mapStyle?: 'grey' | 'light'; statusColors: Record<string, string> }) {
   // Only plot leases that have valid lat/lng coordinates
   const leases = allLeases.filter(l =>
     typeof (l as any).lat === 'number' && typeof (l as any).lng === 'number' &&
@@ -1109,7 +1121,7 @@ function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey' }: {
         />
         <FitBoundsHelper positions={positions} />
         {leases.filter(l => l.lat && l.lng).map(l => {
-          const icon = createColoredIcon(statusMarkerColors[l.status] || '#3B82F6');
+          const icon = createColoredIcon(statusColors[l.status] || '#3B82F6');
           return (
             <Marker key={l.id} position={[l.lat, l.lng]} icon={icon}>
               <Popup>
@@ -1123,7 +1135,7 @@ function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey' }: {
                   </div>
                   <div className="flex items-center gap-1.5 pt-0.5">
                     <span className={`inline-block w-2 h-2 rounded-full`}
-                      style={{ backgroundColor: statusMarkerColors[l.status] || '#3B82F6' }} />
+                      style={{ backgroundColor: statusColors[l.status] || '#3B82F6' }} />
                     <span>{l.status}</span>
                   </div>
                   <p className="text-gray-500">Strategy: {l.strategy}</p>
@@ -1155,6 +1167,22 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
   const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'leaseEnd', dir: 'asc' });
   const [showMap, setShowMap] = useState(true);
   const [mapStyle, setMapStyle] = useState<'grey' | 'light'>('grey');
+  // User-customizable map icon colors per status (persisted to localStorage)
+  const [statusColors, setStatusColors] = useState<Record<string, string>>(() => {
+    try {
+      const s = localStorage.getItem('cre_map_status_colors');
+      const parsed = s ? JSON.parse(s) : {};
+      return { ...DEFAULT_STATUS_MARKER_COLORS, ...parsed };
+    } catch {
+      return { ...DEFAULT_STATUS_MARKER_COLORS };
+    }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('cre_map_status_colors', JSON.stringify(statusColors)); } catch {}
+  }, [statusColors]);
+  const updateStatusColor = (status: string, color: string) =>
+    setStatusColors(prev => ({ ...prev, [status]: color }));
+  const resetStatusColors = () => setStatusColors({ ...DEFAULT_STATUS_MARKER_COLORS });
 
   // Multi-select filter helper
   const toggleFilter = (set: Set<string>, value: string, setter: (s: Set<string>) => void) => {
@@ -1347,15 +1375,75 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
             </Button>
           </div>
         </div>
-        {showMap && <PortfolioMap leases={filtered} onViewProfile={onViewProfile} mapStyle={mapStyle} />}
+        {showMap && <PortfolioMap leases={filtered} onViewProfile={onViewProfile} mapStyle={mapStyle} statusColors={statusColors} />}
         {showMap && (
-          <div className="flex gap-4 text-[10px] text-muted-foreground flex-wrap items-center mt-3 pt-3 border-t border-border">
-            {Object.entries(statusMarkerColors).map(([status, color]) => (
-              <span key={status} className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: color }} />
-                {status}
-              </span>
+          <div className="flex gap-3 text-[10px] text-muted-foreground flex-wrap items-center mt-3 pt-3 border-t border-border">
+            {Object.entries(statusColors).map(([status, color]) => (
+              <Popover key={status}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-md border border-transparent hover:border-border hover:bg-muted/50 transition-colors"
+                    title={`Click to change color for ${status}`}
+                    data-testid={`button-map-color-${status.replace(/\s+/g, '-').toLowerCase()}`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full inline-block ring-1 ring-border"
+                      style={{ backgroundColor: color }}
+                    />
+                    <span>{status}</span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-56 p-3" align="start">
+                  <p className="text-[11px] font-semibold text-muted-foreground mb-2">
+                    Marker color — {status}
+                  </p>
+                  <div className="grid grid-cols-6 gap-1.5">
+                    {MAP_ICON_PALETTE.map(c => (
+                      <button
+                        key={c}
+                        onClick={() => updateStatusColor(status, c)}
+                        className={cn(
+                          'w-6 h-6 rounded-md flex items-center justify-center transition-transform hover:scale-110',
+                          color === c && 'ring-2 ring-offset-1 ring-foreground'
+                        )}
+                        style={{ backgroundColor: c }}
+                        aria-label={`Set ${status} color to ${c}`}
+                        data-testid={`swatch-${status.replace(/\s+/g, '-').toLowerCase()}-${c}`}
+                      >
+                        {color === c && <Check className="w-3 h-3 text-white" />}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-3 flex items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+                      <span>Custom:</span>
+                      <input
+                        type="color"
+                        value={color}
+                        onChange={e => updateStatusColor(status, e.target.value)}
+                        className="w-7 h-7 rounded cursor-pointer border border-border bg-transparent p-0"
+                        data-testid={`custom-color-${status.replace(/\s+/g, '-').toLowerCase()}`}
+                      />
+                    </label>
+                    <button
+                      onClick={() => updateStatusColor(status, DEFAULT_STATUS_MARKER_COLORS[status] || '#3B82F6')}
+                      className="ml-auto text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             ))}
+            <button
+              onClick={resetStatusColors}
+              className="ml-auto text-[10px] text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-muted/50"
+              title="Reset all map icon colors to defaults"
+              data-testid="button-reset-map-colors"
+            >
+              Reset all colors
+            </button>
           </div>
         )}
       </div>

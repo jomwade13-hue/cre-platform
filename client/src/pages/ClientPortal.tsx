@@ -51,6 +51,7 @@ export interface ClientPortfolio {
   lastUpdated: string;
   status: 'Active' | 'Archived';
   color: string;
+  logo?: string;        // Optional client/portfolio logo (data URL)
 }
 
 // ── Role Config ──────────────────────────────────────────────────────────────
@@ -424,6 +425,33 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
+  // Pending delete portfolio (shown in confirmation modal)
+  const [deletePortfolioId, setDeletePortfolioId] = useState<number | null>(null);
+
+  const handleDeletePortfolio = (id: number) => {
+    setPortfolios(prev => prev.filter(p => p.id !== id));
+    setAssignments(prev => prev.filter(a => a.portfolioId !== id));
+    setDeletePortfolioId(null);
+  };
+
+  const handlePortfolioLogoUpload = (id: number, file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: dataUrl } : p));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePortfolioLogo = (id: number) => {
+    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: undefined } : p));
+  };
+
+  const handleChangePortfolioColor = (id: number, color: string) => {
+    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, color } : p));
+  };
+
   const handleAdd = () => {
     if (!newName.trim()) return;
     const newId = Date.now();
@@ -523,7 +551,6 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
             )}
             <div>
               <h1 className="text-sm font-bold text-slate-900 dark:text-white">Client Portal</h1>
-              <p className="text-[10px] text-slate-500 dark:text-white/40">Transcend CRE Dashboard</p>
             </div>
           </div>
 
@@ -598,25 +625,91 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
             return (
               <div
                 key={portfolio.id}
-                className="group text-left bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-900/5 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] dark:border-white/[0.06] dark:hover:border-white/[0.12] dark:hover:shadow-lg dark:hover:shadow-black/20 rounded-xl transition-all duration-200 hover:-translate-y-0.5"
+                className="relative group text-left bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-900/5 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] dark:border-white/[0.06] dark:hover:border-white/[0.12] dark:hover:shadow-lg dark:hover:shadow-black/20 rounded-xl transition-all duration-200 hover:-translate-y-0.5"
                 data-testid={`card-portfolio-${portfolio.id}`}
               >
+                {/* Owner-only actions menu */}
+                {myRole === 'owner' && (
+                  <div className="absolute top-3 right-3 z-20">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          onClick={e => e.stopPropagation()}
+                          className="w-7 h-7 rounded-md flex items-center justify-center bg-white/0 hover:bg-slate-100 text-slate-400 hover:text-slate-700 dark:hover:bg-white/[0.08] dark:text-white/40 dark:hover:text-white transition-colors"
+                          aria-label="Portfolio actions"
+                          data-testid={`button-portfolio-actions-${portfolio.id}`}
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-56" onClick={e => e.stopPropagation()}>
+                        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-white/40">Customize</DropdownMenuLabel>
+                        <label className="flex items-center w-full px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-white/[0.06]">
+                          <Upload className="w-3.5 h-3.5 mr-2" />
+                          {portfolio.logo ? 'Replace logo' : 'Upload logo'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={e => { const f = e.target.files?.[0]; if (f) handlePortfolioLogoUpload(portfolio.id, f); e.currentTarget.value = ''; }}
+                            data-testid={`input-portfolio-logo-${portfolio.id}`}
+                          />
+                        </label>
+                        {portfolio.logo && (
+                          <DropdownMenuItem onClick={() => handleRemovePortfolioLogo(portfolio.id)} data-testid={`button-remove-portfolio-logo-${portfolio.id}`}>
+                            <X className="w-3.5 h-3.5 mr-2" />Remove logo
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-white/40">Card color</DropdownMenuLabel>
+                        <div className="grid grid-cols-4 gap-1.5 px-2 py-1.5">
+                          {PORTFOLIO_COLORS.map(c => (
+                            <button
+                              key={c}
+                              onClick={() => handleChangePortfolioColor(portfolio.id, c)}
+                              className={`w-7 h-7 rounded-md flex items-center justify-center transition-transform hover:scale-110 ${portfolio.color === c ? 'ring-2 ring-offset-2 ring-slate-900 dark:ring-white dark:ring-offset-[hsl(222,47%,13%)]' : ''}`}
+                              style={{ backgroundColor: c }}
+                              aria-label={`Set color ${c}`}
+                              data-testid={`button-portfolio-color-${portfolio.id}-${c}`}
+                            >
+                              {portfolio.color === c && <Check className="w-3.5 h-3.5 text-white" />}
+                            </button>
+                          ))}
+                        </div>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => setDeletePortfolioId(portfolio.id)}
+                          className="text-red-500 dark:text-red-400 focus:text-red-500 dark:focus:text-red-400"
+                          data-testid={`button-delete-portfolio-${portfolio.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-2" />Delete portfolio
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                )}
                 {/* Clickable main area */}
                 <button
                   onClick={() => onSelectPortfolio({ ...portfolio, userRole: myRole })}
                   className="w-full text-left p-5 pb-3"
                 >
                   <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${portfolio.color}20` }}>
-                        <Briefcase className="w-5 h-5" style={{ color: portfolio.color }} />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-300 transition-colors">{portfolio.name}</h3>
-                        <p className="text-xs text-slate-500 dark:text-white/40">{portfolio.clientName}</p>
+                    <div className="flex items-center gap-3 min-w-0">
+                      {portfolio.logo ? (
+                        <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-slate-200 dark:border-white/[0.06] flex items-center justify-center shrink-0">
+                          <img src={portfolio.logo} alt={`${portfolio.clientName} logo`} className="max-w-full max-h-full object-contain" />
+                        </div>
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${portfolio.color}20` }}>
+                          <Briefcase className="w-5 h-5" style={{ color: portfolio.color }} />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-slate-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-300 transition-colors truncate">{portfolio.name}</h3>
+                        <p className="text-xs text-slate-500 dark:text-white/40 truncate">{portfolio.clientName}</p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className={`flex items-center gap-2 shrink-0 ${myRole === 'owner' ? 'pr-8' : ''}`}>
                       {getRoleBadge(myRole)}
                       <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 dark:text-white/20 dark:group-hover:text-white/50 group-hover:translate-x-0.5 transition-all" />
                     </div>
@@ -762,10 +855,53 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
         />
       )}
 
+      {/* Delete Portfolio Confirmation Modal */}
+      {deletePortfolioId !== null && (() => {
+        const target = portfolios.find(p => p.id === deletePortfolioId);
+        if (!target) return null;
+        return (
+          <Dialog open onOpenChange={() => setDeletePortfolioId(null)}>
+            <DialogContent className="max-w-md bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
+              <DialogHeader>
+                <DialogTitle className="text-slate-900 dark:text-white flex items-center gap-2">
+                  <Trash2 className="w-4 h-4 text-red-500 dark:text-red-400" />Delete Portfolio
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 mt-2">
+                <p className="text-sm text-slate-600 dark:text-white/70">
+                  Are you sure you want to delete <span className="font-semibold text-slate-900 dark:text-white">{target.name}</span>?
+                  This will remove the portfolio and all of its team assignments. This action cannot be undone.
+                </p>
+                <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+                  Portfolio data, team members, and access history will be permanently removed.
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/[0.06]"
+                    onClick={() => setDeletePortfolioId(null)}
+                    data-testid="button-cancel-delete-portfolio"
+                  >Cancel</Button>
+                  <Button
+                    size="sm"
+                    className="bg-red-600 hover:bg-red-500 text-white"
+                    onClick={() => handleDeletePortfolio(target.id)}
+                    data-testid="button-confirm-delete-portfolio"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete Portfolio
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
+
       {/* Footer */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/80 dark:border-white/[0.04] dark:bg-[hsl(222,47%,10%)]/80 backdrop-blur-sm py-3">
         <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-[10px] text-slate-500 dark:text-white/20">
-          <span>Transcend Client Dashboard</span>
+          <span>Client Dashboard</span>
           <span>{portfolios.length} portfolio{portfolios.length !== 1 ? 's' : ''} &middot; &copy; {new Date().getFullYear()}</span>
         </div>
       </div>

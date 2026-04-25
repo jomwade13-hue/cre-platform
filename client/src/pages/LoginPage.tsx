@@ -20,7 +20,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [logo, setLogo] = useState<string>('');
+  // Default logo: Transwestern brand mark (user-uploadable to override)
+  const [logo, setLogo] = useState<string>('/transwestern-logo.png');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,14 +73,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           {/* Logo area */}
           <div className="flex flex-col items-center mb-8">
             {logo ? (
-              <div className="relative group mb-4">
-                <img src={logo} alt="Company logo" className="h-14 max-w-[200px] object-contain" />
-                <button
-                  onClick={() => setLogo('')}
-                  className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="w-3 h-3" />
-                </button>
+              <div className="relative group mb-4 px-6 py-4 rounded-xl bg-[hsl(222,47%,14%)] dark:bg-white/[0.04] shadow-md flex items-center justify-center">
+                <img src={logo} alt="Company logo" className="h-10 w-auto max-w-[280px] object-contain" />
               </div>
             ) : (
               <label className="mb-4 cursor-pointer group" title="Upload company logo">
@@ -175,7 +170,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           {/* Footer */}
           <div className="mt-6 pt-5 border-t border-slate-200 dark:border-white/[0.06]">
             <div className="flex items-center justify-between text-[10px] text-slate-400 dark:text-white/25">
-              <span>Transcend Client Dashboard</span>
+              <span>Client Dashboard</span>
               <span>&copy; {new Date().getFullYear()}</span>
             </div>
           </div>
