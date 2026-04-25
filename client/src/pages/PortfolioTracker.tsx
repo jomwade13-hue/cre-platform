@@ -307,13 +307,13 @@ function BuildingProfileModal({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[92vh] p-0 overflow-hidden flex flex-col">
+      <DialogContent className="max-w-5xl max-h-[95vh] p-0 overflow-hidden flex flex-col">
         {/* ─── Photo Carousel (top half) ─── */}
-        <div className="relative bg-black/95 w-full" style={{ minHeight: '320px', maxHeight: '380px' }}>
+        <div className="relative bg-black/95 w-full" style={{ minHeight: '440px', maxHeight: '520px' }}>
           {photos.length > 0 ? (
             <>
               {/* Current photo */}
-              <div className="w-full h-[360px] relative">
+              <div className="w-full h-[480px] relative">
                 {photos[safeIdx]?.url ? (
                   <img src={photos[safeIdx].url} alt={photos[safeIdx].label} className="w-full h-full object-contain" />
                 ) : (
@@ -354,7 +354,7 @@ function BuildingProfileModal({
               </div>
             </>
           ) : (
-            <div className="w-full h-[320px] flex flex-col items-center justify-center gap-3" style={{ background: 'linear-gradient(135deg, hsl(215 40% 25%), hsl(215 50% 14%))' }}>
+            <div className="w-full h-[440px] flex flex-col items-center justify-center gap-3" style={{ background: 'linear-gradient(135deg, hsl(215 40% 25%), hsl(215 50% 14%))' }}>
               <Camera className="w-12 h-12 text-white/20" />
               <p className="text-white/40 text-sm">No photos yet</p>
             </div>
@@ -496,6 +496,58 @@ function BuildingProfileModal({
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              {/* Location & CoStar fields */}
+              <div className="mt-3 pt-3 border-t border-border">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Location & References</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Latitude</label>
+                    <Input
+                      type="number"
+                      step="0.000001"
+                      placeholder="e.g. 33.7573"
+                      value={(lease as any).lat ?? ''}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const num = raw === '' ? undefined : Number(raw);
+                        onUpdate({ ...lease, lat: Number.isFinite(num as number) ? (num as number) : undefined } as any);
+                      }}
+                      className="h-8 text-xs tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Longitude</label>
+                    <Input
+                      type="number"
+                      step="0.000001"
+                      placeholder="e.g. -84.3862"
+                      value={(lease as any).lng ?? ''}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const num = raw === '' ? undefined : Number(raw);
+                        onUpdate({ ...lease, lng: Number.isFinite(num as number) ? (num as number) : undefined } as any);
+                      }}
+                      className="h-8 text-xs tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">CoStar ID</label>
+                    <Input
+                      type="text"
+                      placeholder="e.g. 8001373"
+                      value={(lease as any).costarId ?? ''}
+                      onChange={e => onUpdate({ ...lease, costarId: e.target.value } as any)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                {typeof (lease as any).lat === 'number' && typeof (lease as any).lng === 'number' && (
+                  <p className="text-[10px] text-muted-foreground mt-2">
+                    ✓ Plotted on map at {(lease as any).lat.toFixed(4)}, {(lease as any).lng.toFixed(4)}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -1033,7 +1085,12 @@ function FitBoundsHelper({ positions }: { positions: [number, number][] }) {
   return null;
 }
 
-function PortfolioMap({ leases, onViewProfile, mapStyle = 'grey' }: { leases: LeaseRecord[]; onViewProfile: (id: number) => void; mapStyle?: 'grey' | 'light' }) {
+function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey' }: { leases: LeaseRecord[]; onViewProfile: (id: number) => void; mapStyle?: 'grey' | 'light' }) {
+  // Only plot leases that have valid lat/lng coordinates
+  const leases = allLeases.filter(l =>
+    typeof (l as any).lat === 'number' && typeof (l as any).lng === 'number' &&
+    Number.isFinite((l as any).lat) && Number.isFinite((l as any).lng)
+  );
   const positions: [number, number][] = leases.filter(l => l.lat && l.lng).map(l => [l.lat, l.lng]);
   const center: [number, number] = positions.length > 0
     ? [positions.reduce((s, p) => s + p[0], 0) / positions.length, positions.reduce((s, p) => s + p[1], 0) / positions.length]
@@ -1119,11 +1176,16 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     { key: 'strategy', label: 'Strategy' },
     { key: 'expiration', label: 'Expiration' },
     { key: 'stage', label: 'Stage' },
+    { key: 'latitude', label: 'Latitude' },
+    { key: 'longitude', label: 'Longitude' },
+    { key: 'costarId', label: 'CoStar ID' },
     { key: 'lastNote', label: 'Last Note' },
   ] as const;
   const ALL_COL_KEYS = LEASE_COLUMNS.map(c => c.key);
+  // Hide lat/lng/costarId by default (advanced columns) but keep available via column picker
+  const DEFAULT_COL_KEYS = ALL_COL_KEYS.filter(k => k !== 'latitude' && k !== 'longitude' && k !== 'costarId');
   const [visibleCols, setVisibleCols] = useState<Set<string>>(
-    () => new Set(ALL_COL_KEYS)
+    () => new Set(DEFAULT_COL_KEYS)
   );
   const toggleCol = (key: string) => setVisibleCols(prev => {
     const next = new Set(prev);
@@ -1162,7 +1224,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     if (activeLayoutName === name) setActiveLayoutName(null);
   };
   const resetToDefault = () => {
-    setVisibleCols(new Set(ALL_COL_KEYS));
+    setVisibleCols(new Set(DEFAULT_COL_KEYS));
     setActiveLayoutName(null);
   };
 
@@ -1222,6 +1284,9 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
       'Submarket': l.submarket,
       'Floors': l.floors,
       'Broker': l.broker,
+      'Latitude': (l as any).lat ?? '',
+      'Longitude': (l as any).lng ?? '',
+      'CoStar ID': (l as any).costarId ?? '',
       'Last Note': (notes[l.id] ?? [])[0]?.text || '',
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1474,6 +1539,9 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                   <span className="flex items-center gap-1">Expiration <SortIcon col="leaseEnd" /></span>
                 </th>}
                 {isColVisible('stage') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Stage</th>}
+                {isColVisible('latitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Latitude</th>}
+                {isColVisible('longitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Longitude</th>}
+                {isColVisible('costarId') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">CoStar ID</th>}
                 {isColVisible('lastNote') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Last Note</th>}
               </tr>
             </thead>
@@ -1531,6 +1599,51 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     ) : (
                       <span className="px-2 text-xs text-muted-foreground">—</span>
                     )}
+                  </td>}
+                  {/* Latitude */}
+                  {isColVisible('latitude') && <td className="px-2 py-1.5 min-w-[110px]">
+                    <Input
+                      type="number"
+                      step="0.000001"
+                      placeholder="—"
+                      value={(l as any).lat ?? ''}
+                      disabled={readOnly}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const num = raw === '' ? undefined : Number(raw);
+                        const updated: any = { ...l, lat: Number.isFinite(num as number) ? num : undefined };
+                        onUpdate(updated);
+                      }}
+                      className="h-7 text-xs tabular-nums px-1.5"
+                    />
+                  </td>}
+                  {/* Longitude */}
+                  {isColVisible('longitude') && <td className="px-2 py-1.5 min-w-[110px]">
+                    <Input
+                      type="number"
+                      step="0.000001"
+                      placeholder="—"
+                      value={(l as any).lng ?? ''}
+                      disabled={readOnly}
+                      onChange={e => {
+                        const raw = e.target.value;
+                        const num = raw === '' ? undefined : Number(raw);
+                        const updated: any = { ...l, lng: Number.isFinite(num as number) ? num : undefined };
+                        onUpdate(updated);
+                      }}
+                      className="h-7 text-xs tabular-nums px-1.5"
+                    />
+                  </td>}
+                  {/* CoStar ID */}
+                  {isColVisible('costarId') && <td className="px-2 py-1.5 min-w-[110px]">
+                    <Input
+                      type="text"
+                      placeholder="—"
+                      value={(l as any).costarId ?? ''}
+                      disabled={readOnly}
+                      onChange={e => onUpdate({ ...l, costarId: e.target.value } as any)}
+                      className="h-7 text-xs tabular-nums px-1.5"
+                    />
                   </td>}
                   {/* Last Note */}
                   {isColVisible('lastNote') && <td className="px-3 py-2.5 min-w-[280px]">
