@@ -43,7 +43,7 @@ import 'leaflet/dist/leaflet.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const PROPERTY_TYPES = ['Office', 'Healthcare', 'Industrial', 'Retail'];
+const PROPERTY_TYPES = ['Office', 'Healthcare', 'Industrial', 'Retail', 'Coworking'];
 const CLIENT_LEADS   = ['Alisha Shields', 'Brittney McDonald', 'George Scott', 'Keith Swartzentruber', 'Kim Boren', 'Kristine Schroeder', 'Matt Epperson', 'Sarah Stieferman', 'Travis Hilty'];
 const STATUSES       = ['—', 'Active Disposition', 'Active Initiative', 'Inactive', 'Archive'];
 const STRATEGIES     = [
