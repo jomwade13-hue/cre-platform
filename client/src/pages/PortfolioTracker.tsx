@@ -4031,7 +4031,7 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
 
 // ── Mass Upload Modal ─────────────────────────────────────────────────────────
 
-const CSV_TEMPLATE_FIELDS = ['Record ID','Tenant','Property','Address','SF','Rent PSF','Total Rent','Lease Start','Lease End','Type','Client Lead','Status','Strategy','Stage','Market','Submarket','Floors','Broker'] as const;
+const CSV_TEMPLATE_FIELDS = ['Record ID','Tenant','Property','Address','SF','Rent PSF','Total Rent','Lease Start','Lease End','Type','Client Lead','Status','Strategy','Stage','Market','Submarket','Floors','Broker','Latitude','Longitude','CoStar ID'] as const;
 const CSV_FIELD_MAP: Record<string, keyof LeaseRecord> = {
   'record id': 'id', 'tenant': 'tenant', 'property': 'property', 'address': 'address',
   'sf': 'sqft', 'rent psf': 'rentPSF', 'total rent': 'totalRent',
@@ -4039,6 +4039,11 @@ const CSV_FIELD_MAP: Record<string, keyof LeaseRecord> = {
   'client lead': 'clientLead', 'status': 'status', 'strategy': 'strategy',
   'stage': 'stage', 'market': 'market', 'submarket': 'submarket',
   'floors': 'floors', 'broker': 'broker',
+  // Geocoding & external IDs
+  'latitude': 'lat', 'lat': 'lat',
+  'longitude': 'lng', 'lng': 'lng', 'long': 'lng', 'lon': 'lng',
+  'costar id': 'costarId', 'costar': 'costarId', 'costarid': 'costarId',
+  'costar property id': 'costarId', 'costar_id': 'costarId',
 };
 
 /** All mappable target fields shown in the field-mapping dropdowns */
@@ -4061,6 +4066,9 @@ const MAPPABLE_FIELDS: { key: keyof LeaseRecord; label: string }[] = [
   { key: 'submarket', label: 'Submarket' },
   { key: 'floors', label: 'Floors' },
   { key: 'broker', label: 'Broker' },
+  { key: 'lat', label: 'Latitude' },
+  { key: 'lng', label: 'Longitude' },
+  { key: 'costarId', label: 'CoStar ID' },
 ];
 
 function parseCSVLine(line: string): string[] {
@@ -4128,7 +4136,7 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
 
   const downloadTemplate = () => {
     const csv = CSV_TEMPLATE_FIELDS.join(',') + '\n' +
-      '1001,Acme Corp,Main Office,"123 Main St, Dallas TX",15000,28.50,427500,2024-01-01,2029-12-31,Office,Alisha Shields,Active Initiative,"Maintain / Renew","1. Plan and Program",Dallas,Uptown,"3,4","Jones Lang LaSalle"\n';
+      '1001,Acme Corp,Main Office,"123 Main St, Dallas TX",15000,28.50,427500,2024-01-01,2029-12-31,Office,Alisha Shields,Active Initiative,"Maintain / Renew","1. Plan and Program",Dallas,Uptown,"3,4","Jones Lang LaSalle",32.7884,-96.8005,8014567\n';
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -4169,6 +4177,9 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
         if (!v) return;
         if (field === 'sqft' || field === 'rentPSF' || field === 'totalRent') {
           record[field] = parseFloat(v.replace(/[,$]/g, '')) || 0;
+        } else if (field === 'lat' || field === 'lng') {
+          const n = parseFloat(v.replace(/[^0-9.\-]/g, ''));
+          if (!isNaN(n)) record[field] = n;
         } else { record[field] = v; }
       });
       return { raw, parsed: record, errors } as UploadRow;
@@ -5281,7 +5292,10 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
             submarket: row.submarket ?? '',
             floors: row.floors ?? '',
             broker: row.broker ?? '',
-          };
+            ...(row.lat !== undefined ? { lat: row.lat } : {}),
+            ...(row.lng !== undefined ? { lng: row.lng } : {}),
+            ...(row.costarId !== undefined ? { costarId: row.costarId } : {}),
+          } as LeaseRecord;
           next.push(newRecord);
         }
       });
