@@ -33,6 +33,7 @@ import {
 } from '@/data/mock';
 import { cn } from '@/lib/utils';
 import { useBranding } from '@/components/Layout';
+import { usePersistedState } from '@/lib/usePersistedState';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -5167,17 +5168,18 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   }, []);
 
   // Shared state
-  const [leasesData, setLeasesData] = useState<LeaseRecord[]>(() =>
+  const [leasesData, setLeasesData] = usePersistedState<LeaseRecord[]>(
+    'cre_leases',
     [...leasesInit].sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1)
   );
-  const [notes,     setNotes]     = useState<Record<number, LeaseNote[]>>(initialLeaseNotes);
-  const [documents, setDocuments] = useState<Record<number, LeaseDocument[]>>(initialLeaseDocuments);
-  const [photos,    setPhotos]    = useState<Record<number, LeasePhoto[]>>(PLACEHOLDER_PHOTOS);
-  const [qbrEntries, setQbrEntries] = useState<QBREntry[]>(INITIAL_QBR_ENTRIES);
-  const [manualDates, setManualDates] = useState<Record<number, string>>({});
+  const [notes,     setNotes]     = usePersistedState<Record<number, LeaseNote[]>>('cre_lease_notes', initialLeaseNotes);
+  const [documents, setDocuments] = usePersistedState<Record<number, LeaseDocument[]>>('cre_lease_documents', initialLeaseDocuments);
+  const [photos,    setPhotos]    = usePersistedState<Record<number, LeasePhoto[]>>('cre_lease_photos', PLACEHOLDER_PHOTOS);
+  const [qbrEntries, setQbrEntries] = usePersistedState<QBREntry[]>('cre_qbr_entries', INITIAL_QBR_ENTRIES);
+  const [manualDates, setManualDates] = usePersistedState<Record<number, string>>('cre_manual_dates', {});
   const [profileId,   setProfileId]   = useState<number | null>(null);
   const [slideDeckOpen, setSlideDeckOpen] = useState(false);
-  const [clientLogos, setClientLogos] = useState<Record<string, string>>(INITIAL_CLIENT_LOGOS);
+  const [clientLogos, setClientLogos] = usePersistedState<Record<string, string>>('cre_client_logos', INITIAL_CLIENT_LOGOS);
   const [printReportOpen, setPrintReportOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [portfolioName, setPortfolioName] = useState('Transcend Portfolio');
@@ -5185,7 +5187,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [massDeleteOpen, setMassDeleteOpen] = useState(false);
   const [mappingTemplates, setMappingTemplates] = useState<MappingTemplate[]>([]);
   const { globalLogo: dashboardLogo, setGlobalLogo: setDashboardLogo } = useBranding();
-  const [milestones, setMilestones] = useState<Record<number, Milestone[]>>({});
+  const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
 
   const addMilestone = (leaseId: number, label: string, date: string) => {
     setMilestones(prev => {

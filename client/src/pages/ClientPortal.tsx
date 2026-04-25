@@ -20,6 +20,8 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger
 } from '@/components/ui/tooltip';
 import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
+import { usePersistedState } from '@/lib/usePersistedState';
+import { ImageIcon } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -392,14 +394,15 @@ interface ClientPortalProps {
 export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPortalProps) {
   const { theme, toggle } = useTheme();
   const isDark = theme === 'dark';
-  const [portfolios, setPortfolios]       = useState<ClientPortfolio[]>(INITIAL_PORTFOLIOS);
-  const [users, setUsers]                 = useState<PortfolioUser[]>(SEED_USERS);
-  const [assignments, setAssignments]     = useState<PortfolioAssignment[]>(SEED_ASSIGNMENTS);
+  const [portfolios, setPortfolios]       = usePersistedState<ClientPortfolio[]>('cre_portfolios', INITIAL_PORTFOLIOS);
+  const [users, setUsers]                 = usePersistedState<PortfolioUser[]>('cre_users', SEED_USERS);
+  const [assignments, setAssignments]     = usePersistedState<PortfolioAssignment[]>('cre_assignments', SEED_ASSIGNMENTS);
   const [search, setSearch]               = useState('');
   const [showAddModal, setShowAddModal]   = useState(false);
   const [newName, setNewName]             = useState('');
   const [newClient, setNewClient]         = useState('');
   const [newMarket, setNewMarket]         = useState('');
+  const [newLogo, setNewLogo]             = useState<string>('');
   const [logo, setLogo]                   = useState<string>('/transwestern-logo-primary.png');
   const [invitePortfolioId, setInvitePortfolioId] = useState<number | null>(null);
   const [teamPortfolioId, setTeamPortfolioId]     = useState<number | null>(null);
@@ -453,7 +456,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     setPortfolios(prev => prev.map(p => p.id === id ? { ...p, color } : p));
   };
 
-  const handleUpdatePortfolioField = <K extends keyof Portfolio>(id: number, field: K, value: Portfolio[K]) => {
+  const handleUpdatePortfolioField = <K extends keyof ClientPortfolio>(id: number, field: K, value: ClientPortfolio[K]) => {
     setPortfolios(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
   };
 
@@ -470,6 +473,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
       lastUpdated: 'Just now',
       status: 'Active',
       color: PORTFOLIO_COLORS[portfolios.length % PORTFOLIO_COLORS.length],
+      logo: newLogo || undefined,
     };
     setPortfolios(prev => [...prev, newPortfolio]);
     // Auto-assign creator as owner
@@ -480,7 +484,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
       invitedAt: new Date().toISOString().slice(0, 10),
       invitedBy: 'System',
     }]);
-    setNewName(''); setNewClient(''); setNewMarket('');
+    setNewName(''); setNewClient(''); setNewMarket(''); setNewLogo('');
     setShowAddModal(false);
   };
 
@@ -841,6 +845,57 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                 <label className="text-xs font-medium text-slate-600 dark:text-white/50">Market / Region</label>
                 <Input placeholder="e.g. Southeast, National" value={newMarket} onChange={e => setNewMarket(e.target.value)}
                   className="h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 dark:bg-white/[0.06] dark:border-white/[0.1] dark:text-white dark:placeholder:text-white/25" data-testid="input-new-market" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-600 dark:text-white/50">Portfolio Logo (optional)</label>
+                {newLogo ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-white/[0.04] p-2.5">
+                    <div className="w-12 h-12 rounded-md bg-white border border-slate-200 dark:border-white/[0.06] flex items-center justify-center overflow-hidden shrink-0">
+                      <img src={newLogo} alt="Portfolio logo preview" className="max-w-full max-h-full object-contain" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-700 dark:text-white/70">Logo selected</p>
+                      <p className="text-[10px] text-slate-500 dark:text-white/40">Will appear on the portfolio card</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-slate-500 hover:text-red-500 dark:text-white/50 dark:hover:text-red-400"
+                      onClick={() => setNewLogo('')}
+                      data-testid="button-remove-new-portfolio-logo"
+                    >
+                      <X className="w-3 h-3 mr-1" />Remove
+                    </Button>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="new-portfolio-logo-input"
+                    className="flex items-center gap-3 rounded-lg border-2 border-dashed border-slate-200 dark:border-white/[0.1] hover:border-blue-400 dark:hover:border-blue-500/40 bg-slate-50/60 dark:bg-white/[0.02] p-3 cursor-pointer transition-colors"
+                    data-testid="label-new-portfolio-logo"
+                  >
+                    <div className="w-10 h-10 rounded-md bg-white border border-slate-200 dark:border-white/[0.06] flex items-center justify-center shrink-0">
+                      <ImageIcon className="w-4 h-4 text-slate-400 dark:text-white/40" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-700 dark:text-white/70">Click to upload logo</p>
+                      <p className="text-[10px] text-slate-500 dark:text-white/40">PNG, JPG, or SVG · Recommended 200×200px</p>
+                    </div>
+                    <input
+                      id="new-portfolio-logo-input"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      data-testid="input-new-portfolio-logo"
+                      onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (!f || !f.type.startsWith('image/')) return;
+                        const reader = new FileReader();
+                        reader.onload = () => setNewLogo(reader.result as string);
+                        reader.readAsDataURL(f);
+                      }}
+                    />
+                  </label>
+                )}
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/[0.06]" onClick={() => setShowAddModal(false)}>Cancel</Button>
