@@ -1123,9 +1123,10 @@ function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey', sta
         />
         <FitBoundsHelper positions={positions} />
         {leases.filter(l => l.lat && l.lng).map(l => {
-          const icon = createColoredIcon(statusColors[l.status] || '#3B82F6');
+          const color = statusColors[l.status] || '#3B82F6';
+          const icon = createColoredIcon(color);
           return (
-            <Marker key={l.id} position={[l.lat, l.lng]} icon={icon}>
+            <Marker key={`${l.id}-${color}`} position={[l.lat, l.lng]} icon={icon}>
               <Popup>
                 <div className="text-xs space-y-1 min-w-[180px]">
                   <p className="font-bold text-sm">{l.tenant}</p>
