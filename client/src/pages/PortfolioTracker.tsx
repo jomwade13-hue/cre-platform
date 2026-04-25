@@ -1054,10 +1054,10 @@ L.Marker.prototype.options.icon = defaultIcon;
 
 // Custom colored icons per status
 const DEFAULT_STATUS_MARKER_COLORS: Record<string, string> = {
-  'Active Initiative':  '#3B82F6',
-  'Active Disposition': '#F59E0B',
+  'Active Initiative':  '#16A34A', // Green
+  'Active Disposition': '#3B82F6', // Blue
   'Inactive':           '#94A3B8',
-  'Archive':            '#6B7280',
+  'Archive':            '#B91C1C', // Dark Red
 };
 
 // Curated palette of swatches for map icon customization
@@ -1174,7 +1174,8 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
   // User-customizable map icon colors per status (persisted to localStorage)
   const [statusColors, setStatusColors] = useState<Record<string, string>>(() => {
     try {
-      const s = localStorage.getItem('cre_map_status_colors');
+      // v2 storage key — defaults updated April 2026 (Active Initiative = Green, Active Disposition = Blue, Archive = Dark Red)
+      const s = localStorage.getItem('cre_map_status_colors_v2');
       const parsed = s ? JSON.parse(s) : {};
       return { ...DEFAULT_STATUS_MARKER_COLORS, ...parsed };
     } catch {
@@ -1182,7 +1183,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     }
   });
   useEffect(() => {
-    try { localStorage.setItem('cre_map_status_colors', JSON.stringify(statusColors)); } catch {}
+    try { localStorage.setItem('cre_map_status_colors_v2', JSON.stringify(statusColors)); } catch {}
   }, [statusColors]);
   const updateStatusColor = (status: string, color: string) =>
     setStatusColors(prev => ({ ...prev, [status]: color }));
