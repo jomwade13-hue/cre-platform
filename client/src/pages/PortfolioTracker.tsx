@@ -309,9 +309,9 @@ function BuildingProfileModal({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-6xl max-h-[95vh] p-0 overflow-hidden flex flex-col">
-        {/* ─── Photo Carousel (top half) ─── */}
-        <div className="relative bg-black/95 w-full" style={{ minHeight: '600px', maxHeight: '70vh' }}>
+      <DialogContent className="max-w-6xl max-h-[95vh] p-0 overflow-y-auto flex flex-col">
+        {/* ─── Photo Carousel (scrolls with rest of content) ─── */}
+        <div className="relative bg-black/95 w-full shrink-0" style={{ minHeight: '600px', maxHeight: '70vh' }}>
           {photos.length > 0 ? (
             <>
               {/* Current photo — sized for typical 3:2 / 16:9 building photos */}
@@ -417,8 +417,8 @@ function BuildingProfileModal({
           </div>
         )}
 
-        {/* ─── Content (scrollable bottom) ─── */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+        {/* ─── Content ─── */}
+        <div className="px-5 py-4 space-y-5">
           {/* Client logo */}
           <div className="flex items-center gap-3">
             {clientLogo ? (
