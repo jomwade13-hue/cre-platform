@@ -25,6 +25,7 @@ import {
   Tooltip, ResponsiveContainer, Legend, Cell
 } from 'recharts';
 import { KPICard } from '@/components/KPICard';
+import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
 import {
   leases as leasesInit, initialLeaseNotes, initialLeaseDocuments,
   leaseExpirationByYear, rentTrendData,
@@ -1647,15 +1648,39 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     </button>
                   </td>
                   {/* Tenant */}
-                  {isColVisible('tenant') && <td className="px-3 py-2.5 font-medium whitespace-normal break-words">{l.tenant}</td>}
+                  {isColVisible('tenant') && <td className="px-3 py-2.5 font-medium whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.tenant}
+                      onSave={v => handleFieldUpdate(l, 'tenant' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Tenant"
+                      testId={`tenant-${l.id}`}
+                    />
+                  </td>}
                   {/* Address */}
-                  {isColVisible('address') && <td className="px-3 py-2.5 text-muted-foreground text-xs whitespace-normal break-words">{l.address || '—'}</td>}
+                  {isColVisible('address') && <td className="px-3 py-2.5 text-muted-foreground text-xs whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.address || ''}
+                      onSave={v => handleFieldUpdate(l, 'address' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Address"
+                      testId={`address-${l.id}`}
+                    />
+                  </td>}
                   {/* Type */}
                   {isColVisible('type') && <td className="px-1 py-1.5 min-w-[110px]">
                     <SelectCell value={l.type} options={PROPERTY_TYPES} onChange={v => handleFieldUpdate(l, 'type', v)} disabled={readOnly} />
                   </td>}
                   {/* Campus Type */}
-                  {isColVisible('campusType') && <td className="px-3 py-2.5 text-muted-foreground whitespace-normal break-words">{l.property}</td>}
+                  {isColVisible('campusType') && <td className="px-3 py-2.5 text-muted-foreground whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.property}
+                      onSave={v => handleFieldUpdate(l, 'property' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Campus / Property"
+                      testId={`property-${l.id}`}
+                    />
+                  </td>}
                   {/* Client Lead */}
                   {isColVisible('clientLead') && <td className="px-1 py-1.5 min-w-[100px]">
                     <SelectCell value={l.clientLead} options={CLIENT_LEADS} onChange={v => handleFieldUpdate(l, 'clientLead', v)} disabled={readOnly} />
@@ -1674,7 +1699,16 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     />
                   </td>}
                   {/* Expiration */}
-                  {isColVisible('expiration') && <td className="px-3 py-2.5 tabular-nums whitespace-nowrap font-medium text-xs">{l.leaseEnd}</td>}
+                  {isColVisible('expiration') && <td className="px-3 py-2.5 tabular-nums whitespace-nowrap font-medium text-xs">
+                    <DoubleClickToEdit
+                      type="date"
+                      value={l.leaseEnd}
+                      onSave={v => handleFieldUpdate(l, 'leaseEnd' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Lease End"
+                      testId={`leaseEnd-${l.id}`}
+                    />
+                  </td>}
                   {/* Stage */}
                   {isColVisible('stage') && <td className="px-1 py-1.5 min-w-[160px]">
                     {(STRATEGY_STAGES[l.strategy] ?? []).length > 0 ? (

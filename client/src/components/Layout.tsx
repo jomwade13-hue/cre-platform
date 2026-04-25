@@ -492,6 +492,14 @@ export function Header({ title, subtitle, onLogout, userRole }: HeaderProps) {
 
   return (
     <header className="dashboard-header bg-card border-b border-border px-6 py-3 flex items-center gap-4 min-h-[60px]">
+      {/* Brand mark */}
+      <img
+        src="/transwestern-logo-primary.png"
+        alt="Transwestern"
+        className="h-7 w-auto max-w-[180px] object-contain shrink-0 dark:brightness-0 dark:invert"
+        data-testid="img-header-logo"
+      />
+      <div className="h-6 w-px bg-border shrink-0" aria-hidden />
       {/* Title */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">

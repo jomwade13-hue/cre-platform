@@ -19,6 +19,7 @@ import {
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger
 } from '@/components/ui/tooltip';
+import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -399,7 +400,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   const [newName, setNewName]             = useState('');
   const [newClient, setNewClient]         = useState('');
   const [newMarket, setNewMarket]         = useState('');
-  const [logo, setLogo]                   = useState<string>('');
+  const [logo, setLogo]                   = useState<string>('/transwestern-logo-primary.png');
   const [invitePortfolioId, setInvitePortfolioId] = useState<number | null>(null);
   const [teamPortfolioId, setTeamPortfolioId]     = useState<number | null>(null);
 
@@ -450,6 +451,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
 
   const handleChangePortfolioColor = (id: number, color: string) => {
     setPortfolios(prev => prev.map(p => p.id === id ? { ...p, color } : p));
+  };
+
+  const handleUpdatePortfolioField = <K extends keyof Portfolio>(id: number, field: K, value: Portfolio[K]) => {
+    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
   };
 
   const handleAdd = () => {
@@ -536,7 +541,11 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
           <div className="flex items-center gap-3">
             {logo ? (
               <div className="relative group">
-                <img src={logo} alt="Company logo" className="h-9 max-w-[140px] object-contain" />
+                <img
+                  src={logo}
+                  alt="Company logo"
+                  className="h-9 max-w-[180px] object-contain dark:brightness-0 dark:invert"
+                />
                 <button onClick={() => setLogo('')} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                   <X className="w-2.5 h-2.5" />
                 </button>
@@ -704,9 +713,25 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                           <Briefcase className="w-5 h-5" style={{ color: portfolio.color }} />
                         </div>
                       )}
-                      <div className="min-w-0">
-                        <h3 className="text-sm font-semibold text-slate-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-300 transition-colors truncate">{portfolio.name}</h3>
-                        <p className="text-xs text-slate-500 dark:text-white/40 truncate">{portfolio.clientName}</p>
+                      <div className="min-w-0" onClick={e => e.stopPropagation()}>
+                        <h3 className="text-sm font-semibold text-slate-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-300 transition-colors truncate">
+                          <DoubleClickToEdit
+                            value={portfolio.name}
+                            onSave={v => handleUpdatePortfolioField(portfolio.id, 'name', v)}
+                            disabled={myRole !== 'owner'}
+                            ariaLabel="Portfolio name"
+                            testId={`portfolio-name-${portfolio.id}`}
+                          />
+                        </h3>
+                        <p className="text-xs text-slate-500 dark:text-white/40 truncate">
+                          <DoubleClickToEdit
+                            value={portfolio.clientName}
+                            onSave={v => handleUpdatePortfolioField(portfolio.id, 'clientName', v)}
+                            disabled={myRole !== 'owner'}
+                            ariaLabel="Client name"
+                            testId={`portfolio-client-${portfolio.id}`}
+                          />
+                        </p>
                       </div>
                     </div>
                     <div className={`flex items-center gap-2 shrink-0 ${myRole === 'owner' ? 'pr-8' : ''}`}>

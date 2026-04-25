@@ -20,8 +20,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [showPass, setShowPass] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  // Default logo: Transwestern brand mark (user-uploadable to override)
-  const [logo, setLogo] = useState<string>('/transwestern-logo.png');
+  // Default logo: Transwestern primary brand mark (user-uploadable to override)
+  const [logo, setLogo] = useState<string>('/transwestern-logo-primary.png');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,8 +73,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           {/* Logo area */}
           <div className="flex flex-col items-center mb-8">
             {logo ? (
-              <div className="relative group mb-4 px-6 py-4 rounded-xl bg-[hsl(222,47%,14%)] dark:bg-white/[0.04] shadow-md flex items-center justify-center">
-                <img src={logo} alt="Company logo" className="h-10 w-auto max-w-[280px] object-contain" />
+              <div className="relative group mb-4 px-2 py-2 flex items-center justify-center">
+                <img
+                  src={logo}
+                  alt="Company logo"
+                  className="h-10 w-auto max-w-[280px] object-contain dark:brightness-0 dark:invert"
+                />
               </div>
             ) : (
               <label className="mb-4 cursor-pointer group" title="Upload company logo">
