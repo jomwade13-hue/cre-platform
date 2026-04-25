@@ -19,7 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend, Cell
@@ -1153,13 +1153,14 @@ function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey', sta
   );
 }
 
-function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMassDelete, readOnly }: {
+function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMassDelete, onAddProperty, readOnly }: {
   data: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   onUpdate: (l: LeaseRecord) => void;
   onViewProfile: (id: number) => void;
   onMassUpload?: () => void;
   onMassDelete?: () => void;
+  onAddProperty?: () => void;
   readOnly?: boolean;
 }) {
   const [search, setSearch]           = useState('');
@@ -1600,8 +1601,8 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
         <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={exportToExcel}>
           <Download className="w-3.5 h-3.5" />Export
         </Button>
-        {!readOnly && (
-          <Button size="sm" className="h-8 gap-1.5 text-xs">
+        {!readOnly && onAddProperty && (
+          <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={onAddProperty}>
             <Plus className="w-3.5 h-3.5" />Add Property
           </Button>
         )}
@@ -4102,6 +4103,193 @@ interface MappingTemplate {
   mappings: { csvCol: string; dbField: string }[];
 }
 
+// ── Add Property Modal ───────────────────────────────────────────────────────
+
+function AddPropertyModal({ existingIds, onAdd, onClose }: {
+  existingIds: number[];
+  onAdd: (lease: LeaseRecord) => void;
+  onClose: () => void;
+}) {
+  const [tenant, setTenant]       = useState('');
+  const [property, setProperty]   = useState('');
+  const [address, setAddress]     = useState('');
+  const [type, setType]           = useState<string>('Office');
+  const [clientLead, setClientLead] = useState<string>('');
+  const [status, setStatus]       = useState<string>('Active Initiative');
+  const [strategy, setStrategy]   = useState<string>('Maintain / Renew');
+  const [sqft, setSqft]           = useState('');
+  const [rentPSF, setRentPSF]     = useState('');
+  const [leaseStart, setLeaseStart] = useState('');
+  const [leaseEnd, setLeaseEnd]   = useState('');
+  const [market, setMarket]       = useState('');
+  const [submarket, setSubmarket] = useState('');
+  const [floors, setFloors]       = useState('');
+  const [broker, setBroker]       = useState('');
+  const [lat, setLat]             = useState('');
+  const [lng, setLng]             = useState('');
+  const [costarId, setCostarId]   = useState('');
+
+  const canSave = tenant.trim().length > 0 && property.trim().length > 0;
+
+  const handleSave = () => {
+    if (!canSave) return;
+    const sqftNum    = parseInt(sqft.replace(/[^0-9]/g, ''), 10) || 0;
+    const rentPSFNum = parseFloat(rentPSF.replace(/[^0-9.]/g, '')) || 0;
+    const totalRent  = Math.round(sqftNum * rentPSFNum);
+    const newId      = (existingIds.length ? Math.max(...existingIds) : 0) + 1;
+    const stages     = STRATEGY_STAGES[strategy] ?? ['—'];
+    const lease: LeaseRecord = {
+      id: newId,
+      tenant: tenant.trim(),
+      property: property.trim(),
+      address: address.trim(),
+      sqft: sqftNum,
+      rentPSF: rentPSFNum,
+      totalRent,
+      leaseStart: leaseStart || '',
+      leaseEnd: leaseEnd || '',
+      type,
+      clientLead,
+      status,
+      strategy,
+      stage: stages[0] ?? '—',
+      market: market.trim(),
+      submarket: submarket.trim(),
+      floors: floors.trim(),
+      broker: broker.trim(),
+      ...(lat ? { lat: parseFloat(lat) } : {}),
+      ...(lng ? { lng: parseFloat(lng) } : {}),
+      ...(costarId ? { costarId: costarId.trim() } : {}),
+    } as LeaseRecord;
+    onAdd(lease);
+    onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Add New Property</DialogTitle>
+          <DialogDescription>
+            Add a property to this portfolio. Tenant and Property are required — everything else can be filled in later.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid grid-cols-2 gap-3 py-2">
+          <div className="col-span-2 grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tenant *</label>
+              <Input value={tenant} onChange={e => setTenant(e.target.value)} placeholder="e.g. Deloitte LLP" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Property Name *</label>
+              <Input value={property} onChange={e => setProperty(e.target.value)} placeholder="e.g. One Peachtree Center" />
+            </div>
+          </div>
+
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Address</label>
+            <Input value={address} onChange={e => setAddress(e.target.value)} placeholder="303 Peachtree St NE, Atlanta, GA" />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Type</label>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {PROPERTY_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Client Lead</label>
+            <Select value={clientLead || '—'} onValueChange={v => setClientLead(v === '—' ? '' : v)}>
+              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="—">—</SelectItem>
+                {CLIENT_LEADS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Status</label>
+            <Select value={status} onValueChange={setStatus}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Strategy</label>
+            <Select value={strategy} onValueChange={setStrategy}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {STRATEGIES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Square Feet</label>
+            <Input value={sqft} onChange={e => setSqft(e.target.value)} placeholder="45000" inputMode="numeric" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Rent PSF</label>
+            <Input value={rentPSF} onChange={e => setRentPSF(e.target.value)} placeholder="38.50" inputMode="decimal" />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Start</label>
+            <Input type="date" value={leaseStart} onChange={e => setLeaseStart(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease End</label>
+            <Input type="date" value={leaseEnd} onChange={e => setLeaseEnd(e.target.value)} />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Market</label>
+            <Input value={market} onChange={e => setMarket(e.target.value)} placeholder="Atlanta" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Submarket</label>
+            <Input value={submarket} onChange={e => setSubmarket(e.target.value)} placeholder="CBD" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Floors</label>
+            <Input value={floors} onChange={e => setFloors(e.target.value)} placeholder="22-24" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Broker</label>
+            <Input value={broker} onChange={e => setBroker(e.target.value)} placeholder="CBRE" />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Latitude</label>
+            <Input value={lat} onChange={e => setLat(e.target.value)} placeholder="33.7573" inputMode="decimal" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Longitude</label>
+            <Input value={lng} onChange={e => setLng(e.target.value)} placeholder="-84.3862" inputMode="decimal" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">CoStar ID</label>
+            <Input value={costarId} onChange={e => setCostarId(e.target.value)} placeholder="8001373" />
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleSave} disabled={!canSave}>
+            <Plus className="w-4 h-4 mr-1.5" />Add Property
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, onDeleteTemplate, onExportTemplates, onImportTemplates }: {
   onImport: (rows: Partial<LeaseRecord>[]) => void;
   onClose: () => void;
@@ -5196,6 +5384,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [portfolioName, setPortfolioName] = useState('Transcend Portfolio');
   const [massUploadOpen, setMassUploadOpen] = useState(false);
   const [massDeleteOpen, setMassDeleteOpen] = useState(false);
+  const [addPropertyOpen, setAddPropertyOpen] = useState(false);
   const [mappingTemplates, setMappingTemplates] = useState<MappingTemplate[]>([]);
   const { globalLogo: dashboardLogo, setGlobalLogo: setDashboardLogo } = useBranding();
   const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
@@ -5307,6 +5496,10 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     setLeasesData(prev => prev.filter(l => !ids.includes(l.id)));
   };
 
+  const addNewProperty = (lease: LeaseRecord) => {
+    setLeasesData(prev => [...prev, lease].sort((a, b) => (a.leaseEnd || '9999') < (b.leaseEnd || '9999') ? -1 : 1));
+  };
+
   return (
     <div className="p-6 space-y-4">
       {/* View-only banner for viewers */}
@@ -5376,6 +5569,18 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           clientLogos={clientLogos}
           portfolioName={portfolioName}
           onClose={() => setSnapshotOpen(false)}
+        />
+      )}
+
+      {/* Add Property Modal */}
+      {addPropertyOpen && (
+        <AddPropertyModal
+          existingIds={leasesData.map(l => l.id)}
+          onAdd={(lease) => {
+            addNewProperty(lease);
+            setProfileId(lease.id);
+          }}
+          onClose={() => setAddPropertyOpen(false)}
         />
       )}
 
@@ -5479,7 +5684,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsList>
 
         <TabsContent value="leases" className="mt-4">
-          <LeasesModule data={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onMassUpload={() => setMassUploadOpen(true)} onMassDelete={() => setMassDeleteOpen(true)} readOnly={readOnly} />
+          <LeasesModule data={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onMassUpload={() => setMassUploadOpen(true)} onMassDelete={() => setMassDeleteOpen(true)} onAddProperty={() => setAddPropertyOpen(true)} readOnly={readOnly} />
         </TabsContent>
 
         <TabsContent value="initiatives" className="mt-4">
