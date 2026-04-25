@@ -1169,7 +1169,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
   const [leadFilter, setLeadFilter]   = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<{ col: string; dir: 'asc' | 'desc' }>({ col: 'leaseEnd', dir: 'asc' });
   const [showMap, setShowMap] = useState(true);
-  const [mapStyle, setMapStyle] = useState<'grey' | 'light'>('grey');
+  const [mapStyle, setMapStyle] = useState<'grey' | 'light'>('light');
   // User-customizable map icon colors per status (persisted to localStorage)
   const [statusColors, setStatusColors] = useState<Record<string, string>>(() => {
     try {
