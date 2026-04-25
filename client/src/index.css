@@ -1,0 +1,227 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* CRE Platform — Professional Navy/Blue palette */
+    --background: 214 33% 97%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 221 83% 33%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 214 40% 93%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 214 32% 91%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 214 40% 93%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 33%;
+    --radius: 0.5rem;
+    --chart-1: 221 83% 33%;
+    --chart-2: 198 89% 38%;
+    --chart-3: 161 94% 30%;
+    --chart-4: 31 97% 55%;
+    --chart-5: 0 84% 60%;
+    /* Sidebar — always dark navy */
+    --sidebar: 222 47% 13%;
+    --sidebar-background: 222 47% 13%;
+    --sidebar-foreground: 210 40% 92%;
+    --sidebar-primary: 213 93% 67%;
+    --sidebar-primary-foreground: 222 47% 11%;
+    --sidebar-accent: 221 47% 20%;
+    --sidebar-accent-foreground: 210 40% 92%;
+    --sidebar-border: 221 47% 20%;
+    --sidebar-ring: 213 93% 67%;
+    /* Fonts */
+    --font-sans: 'Inter', 'DM Sans', system-ui, sans-serif;
+    --font-serif: Georgia, serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  .dark {
+    --background: 222 47% 8%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 213 93% 67%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 215 28% 18%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 215 28% 18%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 215 28% 18%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 62% 55%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 215 28% 22%;
+    --input: 215 28% 22%;
+    --ring: 213 93% 67%;
+    --chart-1: 213 93% 67%;
+    --chart-2: 198 89% 58%;
+    --chart-3: 161 64% 47%;
+    --chart-4: 31 97% 65%;
+    --chart-5: 0 72% 65%;
+    --sidebar: 222 47% 9%;
+    --sidebar-background: 222 47% 9%;
+    --sidebar-foreground: 210 40% 92%;
+    --sidebar-primary: 213 93% 67%;
+    --sidebar-primary-foreground: 222 47% 11%;
+    --sidebar-accent: 221 47% 16%;
+    --sidebar-accent-foreground: 210 40% 92%;
+    --sidebar-border: 221 47% 16%;
+    --sidebar-ring: 213 93% 67%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', 'DM Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+}
+
+/* Dashboard layout */
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 1fr;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.sidebar-nav {
+  grid-row: 1 / -1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dashboard-header {
+  grid-column: 2;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.dashboard-main {
+  grid-column: 2;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Tabular numbers for financial data */
+.tabular-nums {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* KPI card hover */
+.kpi-card {
+  transition: box-shadow 180ms ease, transform 180ms ease;
+}
+.kpi-card:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  transform: translateY(-1px);
+}
+
+/* Status badges */
+.status-active   { @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400; }
+.status-expired  { @apply bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400; }
+.status-pending  { @apply bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400; }
+.status-complete { @apply bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400; }
+.status-hold     { @apply bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400; }
+
+/* Gantt bar */
+.gantt-bar {
+  border-radius: 3px;
+  height: 20px;
+  position: absolute;
+  transition: opacity 150ms;
+}
+.gantt-bar:hover { opacity: 0.8; }
+
+/* Leaflet fix inside dashboard */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  border-radius: 0.5rem;
+  z-index: 1;
+}
+
+/* Greyscale map tiles — light, grey-and-white (applied only when .map-grey is set) */
+.portfolio-map.map-grey .leaflet-tile-pane {
+  filter: grayscale(1) brightness(1.18) contrast(0.85) saturate(0);
+}
+
+/* Light (colored) map — natural color from Voyager tiles, no filter */
+.portfolio-map.map-light .leaflet-tile-pane {
+  filter: none;
+}
+
+/* Dark mode: invert only in greyscale mode; light mode keeps natural appearance */
+.dark .portfolio-map.map-grey .leaflet-tile-pane {
+  filter: grayscale(1) invert(1) hue-rotate(180deg) brightness(0.85) contrast(1.1);
+}
+.dark .portfolio-map.map-light .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(1.05);
+}
+
+/* Keep markers/popups unaffected by tile filters */
+.portfolio-map .leaflet-marker-pane,
+.portfolio-map .leaflet-popup-pane,
+.portfolio-map .leaflet-shadow-pane {
+  filter: none;
+}
+.dark .portfolio-map .leaflet-marker-pane,
+.dark .portfolio-map .leaflet-popup-pane,
+.dark .portfolio-map .leaflet-shadow-pane {
+  filter: none;
+}
+
+/* Map popup styling */
+.leaflet-popup-content-wrapper {
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+}
+.leaflet-popup-content {
+  margin: 10px 12px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.3); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
+
+/* Table sticky header */
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: hsl(var(--background));
+}
+
+/* Module content-visibility for perf */
+.module-card {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 160px;
+}
