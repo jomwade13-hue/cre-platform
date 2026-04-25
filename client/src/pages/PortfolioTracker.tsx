@@ -309,13 +309,13 @@ function BuildingProfileModal({
 
   return (
     <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl max-h-[95vh] p-0 overflow-hidden flex flex-col">
+      <DialogContent className="max-w-6xl max-h-[95vh] p-0 overflow-hidden flex flex-col">
         {/* ─── Photo Carousel (top half) ─── */}
-        <div className="relative bg-black/95 w-full" style={{ minHeight: '440px', maxHeight: '520px' }}>
+        <div className="relative bg-black/95 w-full" style={{ minHeight: '600px', maxHeight: '70vh' }}>
           {photos.length > 0 ? (
             <>
-              {/* Current photo */}
-              <div className="w-full h-[480px] relative">
+              {/* Current photo — sized for typical 3:2 / 16:9 building photos */}
+              <div className="w-full relative" style={{ height: 'min(70vh, 720px)' }}>
                 {photos[safeIdx]?.url ? (
                   <img src={photos[safeIdx].url} alt={photos[safeIdx].label} className="w-full h-full object-contain" />
                 ) : (
@@ -356,7 +356,7 @@ function BuildingProfileModal({
               </div>
             </>
           ) : (
-            <div className="w-full h-[440px] flex flex-col items-center justify-center gap-3" style={{ background: 'linear-gradient(135deg, hsl(215 40% 25%), hsl(215 50% 14%))' }}>
+            <div className="w-full flex flex-col items-center justify-center gap-3" style={{ height: 'min(70vh, 720px)', background: 'linear-gradient(135deg, hsl(215 40% 25%), hsl(215 50% 14%))' }}>
               <Camera className="w-12 h-12 text-white/20" />
               <p className="text-white/40 text-sm">No photos yet</p>
             </div>
