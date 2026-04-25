@@ -253,7 +253,7 @@ function placeholderGradient(label: string, category: string) {
 // ── Building Profile Modal ────────────────────────────────────────────────────
 
 function BuildingProfileModal({
-  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onAddPhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone
+  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone
 }: {
   lease: LeaseRecord;
   notes: LeaseNote[];
@@ -263,6 +263,7 @@ function BuildingProfileModal({
   onAddNote: (text: string, author: string) => void;
   onAddDocument: (doc: Omit<LeaseDocument, 'id'>) => void;
   onAddPhoto: (label: string, category: LeasePhoto['category'], url: string) => void;
+  onRemovePhoto: (photoId: number) => void;
   onSetClientLogo: (dataUrl: string) => void;
   onClose: () => void;
   onUpdate: (updated: LeaseRecord) => void;
@@ -362,11 +363,30 @@ function BuildingProfileModal({
             </div>
           )}
 
-          {/* Add Photo button (overlay) */}
-          <button onClick={() => setShowAddPhoto(true)}
-            className="absolute top-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur text-white text-xs font-medium transition-colors">
-            <ImagePlus className="w-3.5 h-3.5" />Add Photo
-          </button>
+          {/* Top-right action buttons (overlay) */}
+          <div className="absolute top-3 right-3 flex items-center gap-2">
+            {photos.length > 0 && photos[safeIdx] && (
+              <button
+                onClick={() => {
+                  const p = photos[safeIdx];
+                  if (!p) return;
+                  if (window.confirm(`Delete photo “${p.label}”? This can’t be undone.`)) {
+                    onRemovePhoto(p.id);
+                    setCarouselIdx(0);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/80 hover:bg-red-500 backdrop-blur text-white text-xs font-medium transition-colors"
+                title="Delete current photo"
+                data-testid="button-delete-photo"
+              >
+                <Trash2 className="w-3.5 h-3.5" />Delete
+              </button>
+            )}
+            <button onClick={() => setShowAddPhoto(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur text-white text-xs font-medium transition-colors">
+              <ImagePlus className="w-3.5 h-3.5" />Add Photo
+            </button>
+          </div>
         </div>
 
         {/* Thumbnail strip */}
@@ -5432,6 +5452,10 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     setPhotos(prev => ({ ...prev, [leaseId]: [...(prev[leaseId] ?? []), newPhoto] }));
   };
 
+  const removePhoto = (leaseId: number, photoId: number) => {
+    setPhotos(prev => ({ ...prev, [leaseId]: (prev[leaseId] ?? []).filter(p => p.id !== photoId) }));
+  };
+
   const addQBREntry = (entry: Omit<QBREntry, 'id'>) => {
     setQbrEntries(prev => [...prev, { ...entry, id: Date.now() }]);
   };
@@ -5524,6 +5548,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           onAddNote={(text, author) => addNote(profileLease.id, text, author)}
           onAddDocument={doc => addDocument(profileLease.id, doc)}
           onAddPhoto={(label, category, url) => addPhoto(profileLease.id, label, category, url)}
+          onRemovePhoto={(photoId) => removePhoto(profileLease.id, photoId)}
           onSetClientLogo={(dataUrl) => setClientLogo(profileLease.tenant, dataUrl)}
           onClose={() => setProfileId(null)}
           onUpdate={updateLease}
