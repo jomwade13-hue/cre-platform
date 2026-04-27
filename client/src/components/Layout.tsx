@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, Bell, Search, Settings,
   Sun, Moon, User, LogOut, ChevronDown, PanelLeftClose, PanelLeftOpen,
   Database, FileBarChart, CalendarRange,
-  Activity, Palette, Upload, X, ImageIcon, Check,
+  Activity, HardHat, Palette, Upload, X, ImageIcon, Check,
   Crown, Edit3, Eye, Shield
 } from 'lucide-react';
 import type { PortfolioRole } from '@/pages/ClientPortal';
@@ -84,10 +84,11 @@ const navConfig = [
     href: '/',
     color: 'text-blue-400',
     modules: [
-      { label: 'Property Database', icon: Database,      tab: 'leases' },
-      { label: 'Active Initiatives', icon: Activity,      tab: 'initiatives' },
-      { label: 'Roadmap',            icon: CalendarRange,  tab: 'roadmap' },
-      { label: 'QBR Report',         icon: FileBarChart,   tab: 'qbr' },
+      { label: 'Property Database',   icon: Database,      tab: 'leases' },
+      { label: 'Active Initiatives',  icon: Activity,      tab: 'initiatives' },
+      { label: 'Project Management',  icon: HardHat,       tab: 'pm' },
+      { label: 'Roadmap',             icon: CalendarRange, tab: 'roadmap' },
+      { label: 'QBR Report',          icon: FileBarChart,  tab: 'qbr' },
     ]
   },
 

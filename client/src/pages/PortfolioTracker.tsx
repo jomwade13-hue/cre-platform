@@ -33,7 +33,9 @@ import {
 } from '@/data/mock';
 import { cn } from '@/lib/utils';
 import { useBranding } from '@/components/Layout';
+import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
 import { usePersistedState } from '@/lib/usePersistedState';
+import { useIDBPersistedState } from '@/lib/useIDBPersistedState';
 import { compressImageFile } from '@/lib/imageUtils';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -1042,7 +1044,7 @@ function SlideDeckView({ leases, notes, onClose }: {
               { label: 'Square Footage', value: fmtSqft(lease.sqft) },
               { label: 'Annual Rent',    value: fmt(lease.totalRent) },
               { label: 'Rent PSF',       value: `$${lease.rentPSF.toFixed(2)}` },
-              { label: 'Lease End',      value: lease.leaseEnd.slice(0, 7) },
+              { label: 'Lease End',      value: fmtDateShort(lease.leaseEnd) },
             ].map(m => (
               <div key={m.label} className="bg-white/5 rounded-xl p-4 border border-white/10">
                 <p className="text-white/40 text-xs mb-1">{m.label}</p>
@@ -1103,14 +1105,14 @@ function SlideDeckView({ leases, notes, onClose }: {
               <div className="flex items-center gap-3">
                 <div className="text-left">
                   <p className="text-white/30 text-xs">Start</p>
-                  <p className="text-white font-semibold text-sm">{lease.leaseStart.slice(0,7)}</p>
+                  <p className="text-white font-semibold text-sm">{fmtDateShort(lease.leaseStart)}</p>
                 </div>
                 <div className="flex-1 h-2 bg-white/10 rounded-full overflow-hidden mx-1">
                   <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
                 </div>
                 <div className="text-right">
                   <p className="text-white/30 text-xs">End</p>
-                  <p className="text-white font-semibold text-sm">{lease.leaseEnd.slice(0,7)}</p>
+                  <p className="text-white font-semibold text-sm">{fmtDateShort(lease.leaseEnd)}</p>
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1381,7 +1383,14 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
 
   const filtered = useMemo(() => {
     let d = [...data];
-    if (search)             d = d.filter(l => l.tenant.toLowerCase().includes(search.toLowerCase()) || l.property.toLowerCase().includes(search.toLowerCase()));
+    if (search) {
+      const q = search.toLowerCase();
+      d = d.filter(l =>
+        l.tenant.toLowerCase().includes(q) ||
+        l.property.toLowerCase().includes(q) ||
+        (l.address || '').toLowerCase().includes(q)
+      );
+    }
     if (statusFilter.size)  d = d.filter(l => statusFilter.has(l.status));
     if (typeFilter.size)    d = d.filter(l => typeFilter.has(l.type));
     if (leadFilter.size)    d = d.filter(l => leadFilter.has(l.clientLead));
@@ -1573,10 +1582,20 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input placeholder="Search tenants, properties…" className="pl-9 h-8 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
+        <SearchWithSuggestions
+          className="flex-1 min-w-[180px]"
+          value={search}
+          onChange={setSearch}
+          placeholder="Search tenants, properties, addresses…"
+          testIdPrefix="search-database"
+          items={data.map<SuggestionItem>(l => ({
+            id: l.id,
+            primary: l.tenant,
+            secondary: l.property,
+            address: l.address || undefined,
+          }))}
+          onSelect={(id) => onViewProfile(Number(id))}
+        />
         {/* Status Filter (multi-select) */}
         <Popover>
           <PopoverTrigger asChild>
@@ -1825,6 +1844,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     <DoubleClickToEdit
                       type="date"
                       value={l.leaseEnd}
+                      display={v => fmtDateShort(v == null ? '' : String(v))}
                       onSave={v => handleFieldUpdate(l, 'leaseEnd' as any, v)}
                       disabled={readOnly}
                       ariaLabel="Lease End"
@@ -1918,7 +1938,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
 
 // ── Active Initiatives ────────────────────────────────────────────────────────
 
-function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareSnapshot, milestones, readOnly }: {
+function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareSnapshot, milestones, readOnly, mode = 'all' }: {
   allLeases: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   onUpdate: (updated: LeaseRecord) => void;
@@ -1926,11 +1946,20 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
   onShareSnapshot: () => void;
   milestones: Record<number, Milestone[]>;
   readOnly?: boolean;
+  /**
+   * 'all' → Active Initiatives tab (Active Initiative + Active Disposition statuses).
+   * 'pm'  → Project Management tab (any status, strategy === 'Project Management').
+   */
+  mode?: 'all' | 'pm';
 }) {
-  // Internal filter: only Active Initiative + Active Disposition
+  const isPM = mode === 'pm';
+
+  // Internal filter: PM mode shows all PM-strategy leases; otherwise active initiatives.
   const activeLeases = useMemo(
-    () => allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition'),
-    [allLeases]
+    () => isPM
+      ? allLeases.filter(l => l.strategy === 'Project Management')
+      : allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition'),
+    [allLeases, isPM]
   );
 
   const [search, setSearch]               = useState('');
@@ -2035,24 +2064,52 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
     return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-0 text-[10px]">24mo+</Badge>;
   };
 
-  const activeStatuses   = ['Active Initiative', 'Active Disposition'];
-  const activeStrategies = [...new Set(activeLeases.map(l => l.strategy))].filter(Boolean).sort();
+  // For Active Initiatives, the available statuses are these two; for PM, allow all statuses present.
+  const activeStatuses   = isPM
+    ? [...new Set(allLeases.filter(l => l.strategy === 'Project Management').map(l => l.status))].filter(Boolean).sort()
+    : ['Active Initiative', 'Active Disposition'];
+  const activeStrategies = [...new Set(allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition').map(l => l.strategy))].filter(Boolean).sort();
+
+  // PM banner / KPI tone
+  const bannerCls   = isPM
+    ? 'bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800/40'
+    : 'bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800/40';
+  const bannerIconCls = isPM ? 'text-purple-600 dark:text-purple-400' : 'text-green-600 dark:text-green-400';
+  const bannerTextCls = isPM ? 'text-purple-800 dark:text-purple-300' : 'text-green-800 dark:text-green-300';
+  const bannerSubCls  = isPM ? 'text-purple-600/80 dark:text-purple-400/60' : 'text-green-600/80 dark:text-green-400/60';
 
   return (
     <div className="space-y-4">
-      {/* Active-only banner */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800/40 rounded-lg">
-        <Filter className="w-3.5 h-3.5 text-green-600 dark:text-green-400 shrink-0" />
-        <span className="text-xs font-medium text-green-800 dark:text-green-300">Showing {activeLeases.length} active initiative{activeLeases.length !== 1 ? 's' : ''}</span>
-        <span className="text-xs text-green-600/80 dark:text-green-400/60">— filtered from {allLeases.length} total leases</span>
+      {/* Banner */}
+      <div className={cn('flex items-center gap-2 px-3 py-2 border rounded-lg', bannerCls)}>
+        {isPM
+          ? <HardHat className={cn('w-3.5 h-3.5 shrink-0', bannerIconCls)} />
+          : <Filter className={cn('w-3.5 h-3.5 shrink-0', bannerIconCls)} />}
+        <span className={cn('text-xs font-medium', bannerTextCls)}>
+          {isPM
+            ? `Showing ${activeLeases.length} Project Management ${activeLeases.length === 1 ? 'facility' : 'facilities'}`
+            : `Showing ${activeLeases.length} active initiative${activeLeases.length !== 1 ? 's' : ''}`}
+        </span>
+        <span className={cn('text-xs', bannerSubCls)}>— filtered from {allLeases.length} total leases</span>
       </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KPICard label="Total Active" value={String(totalActive)} icon={<Activity className="w-4 h-4" />} accent="green" />
-        <KPICard label="PM Projects" value={String(pmProjects)} icon={<HardHat className="w-4 h-4" />} accent="purple" />
-        <KPICard label="Total Active SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
-        <KPICard label="Avg Progress" value={`${avgProgress}%`} icon={<BarChart2 className="w-4 h-4" />} accent="amber" />
+        {isPM ? (
+          <>
+            <KPICard label="PM Facilities" value={String(activeLeases.length)} icon={<HardHat className="w-4 h-4" />} accent="purple" />
+            <KPICard label="Total PM SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
+            <KPICard label="Avg Progress" value={`${avgProgress}%`} icon={<BarChart2 className="w-4 h-4" />} accent="amber" />
+            <KPICard label="Active" value={String(activeLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition').length)} icon={<Activity className="w-4 h-4" />} accent="green" />
+          </>
+        ) : (
+          <>
+            <KPICard label="Total Active" value={String(totalActive)} icon={<Activity className="w-4 h-4" />} accent="green" />
+            <KPICard label="PM Projects" value={String(pmProjects)} icon={<HardHat className="w-4 h-4" />} accent="purple" />
+            <KPICard label="Total Active SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
+            <KPICard label="Avg Progress" value={`${avgProgress}%`} icon={<BarChart2 className="w-4 h-4" />} accent="amber" />
+          </>
+        )}
       </div>
 
       {/* Milestone Completion Tracker */}
@@ -2141,10 +2198,20 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
 
       {/* Filters bar */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input placeholder="Search tenant, property, strategy, stage…" className="pl-9 h-8 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
+        <SearchWithSuggestions
+          className="flex-1 min-w-[180px]"
+          value={search}
+          onChange={setSearch}
+          placeholder={isPM ? 'Search PM tenant, property, address, stage…' : 'Search tenant, property, address, strategy, stage…'}
+          testIdPrefix={isPM ? 'search-pm' : 'search-initiatives'}
+          items={activeLeases.map<SuggestionItem>(l => ({
+            id: l.id,
+            primary: l.tenant,
+            secondary: l.property,
+            address: l.address || undefined,
+          }))}
+          onSelect={(id) => onViewProfile(Number(id))}
+        />
         {/* Status filter */}
         <Popover>
           <PopoverTrigger asChild>
@@ -2166,27 +2233,30 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
             ))}
           </PopoverContent>
         </Popover>
-        {/* Strategy filter */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className={cn('h-8 w-[150px] text-xs justify-between font-normal', strategyFilter.size > 0 && 'border-primary/50 text-primary')}>
-              {filterLabel(strategyFilter, 'All Strategies')}
-              <ChevronDown className="w-3.5 h-3.5 opacity-50 ml-1" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-52 p-2" align="start">
-            <div className="flex items-center justify-between mb-1 px-1">
-              <p className="text-xs font-semibold text-muted-foreground">Strategy</p>
-              {strategyFilter.size > 0 && <button className="text-[10px] text-primary hover:underline" onClick={() => setStrategyFilter(new Set())}>Clear</button>}
-            </div>
-            {activeStrategies.map(s => (
-              <label key={s} className="flex items-center gap-2 px-1 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm">
-                <Checkbox checked={strategyFilter.has(s)} onCheckedChange={() => toggleFilter(strategyFilter, s, setStrategyFilter)} className="h-4 w-4" />
-                {s}
-              </label>
-            ))}
-          </PopoverContent>
-        </Popover>
+        {/* Strategy filter (Active Initiatives only — PM tab is already strategy-locked) */}
+        {!isPM && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className={cn('h-8 w-[160px] text-xs justify-between font-normal', strategyFilter.size > 0 && 'border-primary/50 text-primary')}>
+                {filterLabel(strategyFilter, 'All Strategies')}
+                <ChevronDown className="w-3.5 h-3.5 opacity-50 ml-1" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-56 p-2" align="start">
+              <div className="flex items-center justify-between mb-1 px-1">
+                <p className="text-xs font-semibold text-muted-foreground">Strategy</p>
+                {strategyFilter.size > 0 && <button className="text-[10px] text-primary hover:underline" onClick={() => setStrategyFilter(new Set())}>Clear</button>}
+              </div>
+              {activeStrategies.map(s => (
+                <label key={s} className="flex items-center gap-2 px-1 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm">
+                  <Checkbox checked={strategyFilter.has(s)} onCheckedChange={() => toggleFilter(strategyFilter, s, setStrategyFilter)} className="h-4 w-4" />
+                  <span className="flex-1">{s}</span>
+                  {s === 'Project Management' && <HardHat className="w-3 h-3 text-purple-500" aria-hidden />}
+                </label>
+              ))}
+            </PopoverContent>
+          </Popover>
+        )}
         {/* Lead filter */}
         <Popover>
           <PopoverTrigger asChild>
@@ -2241,7 +2311,7 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
       {filtered.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
           <Activity className="w-10 h-10 mx-auto mb-2 opacity-30" />
-          <p className="text-sm">No active initiatives match your filters.</p>
+          <p className="text-sm">{isPM ? 'No Project Management facilities match your filters.' : 'No active initiatives match your filters.'}</p>
         </div>
       )}
 
@@ -2820,7 +2890,7 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                       )}
                     </div>
                     <div className="flex-1 relative h-7 rounded bg-muted/20 cursor-pointer overflow-hidden" onClick={() => onViewProfile(lease.id)}
-                      title={`${lease.tenant} — ${lease.property}${lease.address ? '\n' + lease.address : ''}\nStrategy: ${lease.strategy} · Stage: ${lease.stage || 'N/A'} · Exp: ${lease.leaseEnd}`}>
+                      title={`${lease.tenant} — ${lease.property}${lease.address ? '\n' + lease.address : ''}\nStrategy: ${lease.strategy} · Stage: ${lease.stage || 'N/A'} · Exp: ${fmtDateShort(lease.leaseEnd)}`}>
                       {monthMarkers.map((m, i) => (
                         <div key={`grid-${m.label}-${m.year}-${i}`} className={cn('absolute top-0 bottom-0 border-l', m.isJan ? 'border-border/60' : 'border-border/15')} style={{ left: `${m.pct}%` }} />
                       ))}
@@ -5030,9 +5100,14 @@ function MassDeleteModal({ leases, onDelete, onClose }: {
   const [deleted, setDeleted] = useState(false);
   const [search, setSearch] = useState('');
 
-  const filtered = leases.filter(l =>
-    !search || l.tenant.toLowerCase().includes(search.toLowerCase()) || l.property.toLowerCase().includes(search.toLowerCase()) || String(l.id).includes(search)
-  );
+  const filtered = leases.filter(l => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return l.tenant.toLowerCase().includes(q)
+      || l.property.toLowerCase().includes(q)
+      || (l.address || '').toLowerCase().includes(q)
+      || String(l.id).includes(search);
+  });
 
   const toggleId = (id: number) => {
     setSelectedIds(prev => {
@@ -5168,10 +5243,31 @@ function MassDeleteModal({ leases, onDelete, onClose }: {
           ) : mode === 'select' ? (
             /* Selection mode */
             <div className="space-y-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input placeholder="Search by tenant, property, or Record ID…" className="pl-9 h-8 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
-              </div>
+              <SearchWithSuggestions
+                value={search}
+                onChange={setSearch}
+                placeholder="Search by tenant, property, address, or Record ID…"
+                testIdPrefix="search-mass-delete"
+                items={leases.map<SuggestionItem>(l => ({
+                  id: l.id,
+                  primary: l.tenant,
+                  secondary: l.property,
+                  address: l.address || undefined,
+                }))}
+                onSelect={(id) => {
+                  // Highlight & select the row when picked from the dropdown
+                  setSelectedIds(prev => {
+                    const next = new Set(prev);
+                    next.add(Number(id));
+                    return next;
+                  });
+                  // Scroll the row into view if it exists in the table
+                  setTimeout(() => {
+                    const el = document.querySelector(`[data-mass-delete-row="${id}"]`);
+                    if (el) (el as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }, 50);
+                }}
+              />
               <div className="border border-border rounded-lg overflow-hidden">
                 <div className="overflow-x-auto max-h-[340px]">
                   <table className="w-full text-xs">
@@ -5191,7 +5287,7 @@ function MassDeleteModal({ leases, onDelete, onClose }: {
                     </thead>
                     <tbody>
                       {filtered.map(l => (
-                        <tr key={l.id} className={cn('border-t border-border/50 cursor-pointer', selectedIds.has(l.id) && 'bg-red-50/50 dark:bg-red-950/20')}
+                        <tr key={l.id} data-mass-delete-row={l.id} className={cn('border-t border-border/50 cursor-pointer', selectedIds.has(l.id) && 'bg-red-50/50 dark:bg-red-950/20')}
                           onClick={() => toggleId(l.id)}>
                           <td className="px-2 py-1.5">
                             <input type="checkbox" checked={selectedIds.has(l.id)} onChange={() => toggleId(l.id)} className="rounded border-border" />
@@ -5500,13 +5596,14 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     [...leasesInit].sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1)
   );
   const [notes,     setNotes]     = usePersistedState<Record<number, LeaseNote[]>>('cre_lease_notes', initialLeaseNotes);
-  const [documents, setDocuments] = usePersistedState<Record<number, LeaseDocument[]>>('cre_lease_documents', initialLeaseDocuments);
-  const [photos,    setPhotos]    = usePersistedState<Record<number, LeasePhoto[]>>('cre_lease_photos', PLACEHOLDER_PHOTOS);
+  // Heavy keys (data URLs for documents/photos) move to IndexedDB so they don't blow the ~5 MB localStorage cap.
+  const [documents, setDocuments] = useIDBPersistedState<Record<number, LeaseDocument[]>>('cre_lease_documents', initialLeaseDocuments);
+  const [photos,    setPhotos]    = useIDBPersistedState<Record<number, LeasePhoto[]>>('cre_lease_photos', PLACEHOLDER_PHOTOS);
   const [qbrEntries, setQbrEntries] = usePersistedState<QBREntry[]>('cre_qbr_entries', INITIAL_QBR_ENTRIES);
   const [manualDates, setManualDates] = usePersistedState<Record<number, string>>('cre_manual_dates', {});
   const [profileId,   setProfileId]   = useState<number | null>(null);
   const [slideDeckOpen, setSlideDeckOpen] = useState(false);
-  const [clientLogos, setClientLogos] = usePersistedState<Record<string, string>>('cre_client_logos', INITIAL_CLIENT_LOGOS);
+  const [clientLogos, setClientLogos] = useIDBPersistedState<Record<string, string>>('cre_client_logos', INITIAL_CLIENT_LOGOS);
   const [printReportOpen, setPrintReportOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [portfolioName, setPortfolioName] = useState('Transcend Portfolio');
@@ -5543,6 +5640,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
 
   const profileLease = leasesData.find(l => l.id === profileId) ?? null;
   const pmLeases     = leasesData.filter(l => l.strategy === 'Project Management');
+  const pmCount      = pmLeases.length;
   const activeInit   = leasesData.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition');
 
   const handleTabChange = (value: string) => {
@@ -5823,6 +5921,9 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           <TabsTrigger value="initiatives" className={cn('text-xs gap-1.5', activeInit.length > 0 && 'ring-1 ring-green-400/50 dark:ring-green-500/40')}><Activity className="w-3.5 h-3.5" />Active Initiatives
             {activeInit.length > 0 && <span className="ml-1.5 bg-green-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none font-semibold">{activeInit.length}</span>}
           </TabsTrigger>
+          <TabsTrigger value="pm"          className={cn('text-xs gap-1.5', pmCount > 0 && 'ring-1 ring-purple-400/50 dark:ring-purple-500/40')}><HardHat className="w-3.5 h-3.5" />Project Management
+            {pmCount > 0 && <span className="ml-1.5 bg-purple-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none font-semibold">{pmCount}</span>}
+          </TabsTrigger>
           <TabsTrigger value="roadmap"     className="text-xs gap-1.5"><CalendarRange className="w-3.5 h-3.5" />Roadmap</TabsTrigger>
           <TabsTrigger value="qbr"         className="text-xs gap-1.5"><FileBarChart  className="w-3.5 h-3.5" />QBR Report</TabsTrigger>
         </TabsList>
@@ -5832,7 +5933,11 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
 
         <TabsContent value="initiatives" className="mt-4">
-          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} readOnly={readOnly} />
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} readOnly={readOnly} mode="all" />
+        </TabsContent>
+
+        <TabsContent value="pm" className="mt-4">
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} readOnly={readOnly} mode="pm" />
         </TabsContent>
 
         <TabsContent value="roadmap" className="mt-4">

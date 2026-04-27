@@ -23,6 +23,15 @@ import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
 import { usePersistedState } from '@/lib/usePersistedState';
 import { compressImageFile } from '@/lib/imageUtils';
 import { ImageIcon } from 'lucide-react';
+import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
+
+// Lightweight lease shape for address-autocomplete in ClientPortal.
+interface PortalLease {
+  id: number;
+  tenant: string;
+  property: string;
+  address: string;
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -408,11 +417,46 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   const [invitePortfolioId, setInvitePortfolioId] = useState<number | null>(null);
   const [teamPortfolioId, setTeamPortfolioId]     = useState<number | null>(null);
 
-  const filtered = portfolios.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.clientName.toLowerCase().includes(search.toLowerCase()) ||
-    p.market.toLowerCase().includes(search.toLowerCase())
-  );
+  // Read leases (set inside the active portfolio dashboard) so we can search by address/tenant/property.
+  // Read directly from localStorage — do NOT use usePersistedState here, since it writes the initial value
+  // and would overwrite the seed leases written by PortfolioTracker.
+  const leasesData = useMemo<PortalLease[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem('cre_leases');
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch { return []; }
+  // Re-read whenever search changes — ensures latest data after returning from a portfolio.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
+
+  const filtered = portfolios.filter(p => {
+    const q = search.toLowerCase();
+    if (!q) return true;
+    if (p.name.toLowerCase().includes(q)) return true;
+    if (p.clientName.toLowerCase().includes(q)) return true;
+    if (p.market.toLowerCase().includes(q)) return true;
+    // Also match if any lease matches the search (currently shared across portfolios).
+    return leasesData.some(l =>
+      (l.tenant && l.tenant.toLowerCase().includes(q)) ||
+      (l.property && l.property.toLowerCase().includes(q)) ||
+      (l.address && l.address.toLowerCase().includes(q))
+    );
+  });
+
+  // Combined suggestion list — portfolios first, then leases (deduped by primary).
+  const searchSuggestions: SuggestionItem[] = useMemo(() => {
+    const items: SuggestionItem[] = [];
+    portfolios.forEach(p => {
+      items.push({ id: `p:${p.id}`, primary: p.name, secondary: p.clientName, address: p.market });
+    });
+    leasesData.forEach(l => {
+      items.push({ id: `l:${l.id}`, primary: l.tenant || l.property || l.address || '', secondary: l.property, address: l.address });
+    });
+    return items;
+  }, [portfolios, leasesData]);
 
   // Lookup helpers
   const getPortfolioAssignments = (pid: number) => assignments.filter(a => a.portfolioId === pid);
@@ -614,13 +658,18 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
         </div>
 
         {/* Search */}
-        <div className="relative mb-6">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-white/25" />
-          <Input
-            placeholder="Search portfolios, clients, or markets..."
-            value={search} onChange={e => setSearch(e.target.value)}
-            className="pl-10 h-10 bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-blue-500/50 focus:ring-blue-500/20 dark:bg-white/[0.04] dark:border-white/[0.08] dark:text-white dark:placeholder:text-white/25 dark:focus:border-blue-400/50 dark:focus:ring-blue-400/20 max-w-md"
-            data-testid="input-search-portfolios"
+        <div className="mb-6 max-w-md">
+          <SearchWithSuggestions
+            value={search}
+            onChange={setSearch}
+            items={searchSuggestions}
+            onSelect={(_id, item) => {
+              // For portfolios: set search to portfolio name. For leases: set to address/property so the user can pick.
+              setSearch(item.primary);
+            }}
+            placeholder="Search portfolios, clients, markets, or addresses…"
+            testIdPrefix="portal-search"
+            maxResults={10}
           />
         </div>
 

@@ -15,8 +15,17 @@ import {
   Tooltip, ResponsiveContainer, Legend, Cell, ScatterChart, Scatter, ZAxis
 } from 'recharts';
 import { KPICard } from '@/components/KPICard';
+import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
 import { leaseComps, mapProperties, timList, marketRentBySubmarket, rentTrendData } from '@/data/mock';
 import { cn } from '@/lib/utils';
+
+/** Format YYYY-MM-DD → MM/DD/YYYY (matches PortfolioTracker fmtDateShort). */
+function fmtDateShort(d?: string): string {
+  if (!d) return '—';
+  const [y, m, day] = d.split('-');
+  if (!y || !m || !day) return d;
+  return `${m}/${day}/${y}`;
+}
 
 // ── Lease Comps ───────────────────────────────────────────────────────────────
 function LeaseCompsModule() {
@@ -27,10 +36,15 @@ function LeaseCompsModule() {
 
   const filtered = useMemo(() => {
     let data = [...leaseComps];
-    if (search) data = data.filter(c =>
-      c.tenant.toLowerCase().includes(search.toLowerCase()) ||
-      c.property.toLowerCase().includes(search.toLowerCase())
-    );
+    if (search) {
+      const q = search.toLowerCase();
+      data = data.filter(c =>
+        c.tenant.toLowerCase().includes(q) ||
+        c.property.toLowerCase().includes(q) ||
+        (c.address || '').toLowerCase().includes(q) ||
+        (c.submarket || '').toLowerCase().includes(q)
+      );
+    }
     if (typeFilter !== 'all') data = data.filter(c => c.leaseType === typeFilter);
     if (subFilter !== 'all') data = data.filter(c => c.submarket === subFilter);
     data.sort((a: any, b: any) => {
@@ -103,8 +117,19 @@ function LeaseCompsModule() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input placeholder="Search tenants or properties…" className="pl-9 h-8 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchWithSuggestions
+            value={search}
+            onChange={setSearch}
+            placeholder="Search tenants, properties, or addresses…"
+            testIdPrefix="leasecomps-search"
+            items={leaseComps.map(c => ({
+              id: c.id,
+              primary: c.tenant,
+              secondary: c.property,
+              address: c.address,
+            } as SuggestionItem))}
+            onSelect={(_id, item) => setSearch(item.primary)}
+          />
         </div>
         <Select value={typeFilter} onValueChange={setTypeFilter}>
           <SelectTrigger className="h-8 w-[130px] text-sm"><SelectValue placeholder="Lease Type" /></SelectTrigger>
@@ -167,7 +192,7 @@ function LeaseCompsModule() {
                     <Badge className={cn('text-xs border-0', typeColors[c.leaseType] || '')}>{c.leaseType}</Badge>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{c.term} yrs</td>
-                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{c.leaseDate}</td>
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap tabular-nums">{fmtDateShort(c.leaseDate)}</td>
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{c.landlord}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground max-w-[200px] truncate">{c.concessions}</td>
                 </tr>
@@ -390,8 +415,19 @@ function TIMListModule() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input placeholder="Search tenants or submarkets…" className="pl-9 h-8 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
+          <SearchWithSuggestions
+            value={search}
+            onChange={setSearch}
+            placeholder="Search tenants, submarkets, or markets…"
+            testIdPrefix="tim-search"
+            items={timList.map(t => ({
+              id: t.id,
+              primary: t.tenant,
+              secondary: t.submarket,
+              address: t.market,
+            } as SuggestionItem))}
+            onSelect={(_id, item) => setSearch(item.primary)}
+          />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="h-8 w-[140px] text-sm"><SelectValue placeholder="Status" /></SelectTrigger>
