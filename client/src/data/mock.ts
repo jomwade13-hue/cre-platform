@@ -13,6 +13,8 @@ export interface LeaseDocument {
   fileType: 'PDF' | 'Excel' | 'Word' | 'CAD' | 'Image' | 'Other';
   size: string;
   date: string;
+  dataUrl?: string;
+  mimeType?: string;
 }
 
 // ── PORTFOLIO TRACKER ────────────────────────────────────────────────────────

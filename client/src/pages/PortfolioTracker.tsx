@@ -259,7 +259,7 @@ function placeholderGradient(label: string, category: string) {
 // ── Building Profile Modal ────────────────────────────────────────────────────
 
 function BuildingProfileModal({
-  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone, onToggleMilestone
+  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onRemoveDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone, onToggleMilestone
 }: {
   lease: LeaseRecord;
   notes: LeaseNote[];
@@ -268,6 +268,7 @@ function BuildingProfileModal({
   clientLogo: string;
   onAddNote: (text: string, author: string) => void;
   onAddDocument: (doc: Omit<LeaseDocument, 'id'>) => void;
+  onRemoveDocument: (docId: number) => void;
   onAddPhoto: (label: string, category: LeasePhoto['category'], url: string) => void;
   onRemovePhoto: (photoId: number) => void;
   onSetClientLogo: (dataUrl: string) => void;
@@ -924,20 +925,100 @@ function BuildingProfileModal({
             </div>
           )}
 
-          {/* Documents (compact) */}
-          {documents.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground mb-2">Documents ({documents.length})</p>
-              <div className="flex flex-wrap gap-2">
-                {documents.map(doc => (
-                  <div key={doc.id} className="flex items-center gap-2 px-2.5 py-1.5 border border-border rounded-md bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer">
-                    <DocIcon type={doc.fileType} />
-                    <span className="text-xs font-medium truncate max-w-[140px]">{doc.name}</span>
-                  </div>
-                ))}
-              </div>
+          {/* Documents */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-muted-foreground">Documents ({documents.length})</p>
+              <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-dashed border-border bg-background hover:bg-muted/50 cursor-pointer text-xs font-medium transition-colors" data-testid="button-add-document">
+                <Upload className="w-3.5 h-3.5" />Add PDF
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  multiple
+                  className="hidden"
+                  onChange={async e => {
+                    const files = Array.from(e.target.files ?? []);
+                    for (const file of files) {
+                      if (file.size > 25 * 1024 * 1024) {
+                        window.alert(`"${file.name}" is larger than 25 MB and was skipped.`);
+                        continue;
+                      }
+                      const dataUrl: string = await new Promise((resolve, reject) => {
+                        const r = new FileReader();
+                        r.onload  = () => resolve(r.result as string);
+                        r.onerror = () => reject(r.error);
+                        r.readAsDataURL(file);
+                      });
+                      const ext = (file.name.split('.').pop() || '').toLowerCase();
+                      const fileType: LeaseDocument['fileType'] =
+                        ext === 'pdf' ? 'PDF' :
+                        (ext === 'xls' || ext === 'xlsx' || ext === 'csv') ? 'Excel' :
+                        (ext === 'doc' || ext === 'docx') ? 'Word' :
+                        (ext === 'dwg' || ext === 'dxf') ? 'CAD' :
+                        (ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'gif' || ext === 'webp') ? 'Image' :
+                        'Other';
+                      const sizeKB = file.size / 1024;
+                      const size = sizeKB < 1024 ? `${sizeKB.toFixed(0)} KB` : `${(sizeKB / 1024).toFixed(1)} MB`;
+                      onAddDocument({
+                        name: file.name,
+                        fileType,
+                        size,
+                        date: new Date().toISOString().slice(0, 10),
+                        dataUrl,
+                        mimeType: file.type || 'application/pdf',
+                      });
+                    }
+                    e.target.value = '';
+                  }}
+                />
+              </label>
             </div>
-          )}
+            {documents.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-3 border border-dashed border-border rounded-md">No documents yet — upload a PDF above</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {documents.map(doc => {
+                  const openable = !!doc.dataUrl;
+                  const handleOpen = () => {
+                    if (!doc.dataUrl) return;
+                    const win = window.open();
+                    if (win) {
+                      win.document.title = doc.name;
+                      win.document.body.style.margin = '0';
+                      const iframe = win.document.createElement('iframe');
+                      iframe.src = doc.dataUrl;
+                      iframe.style.cssText = 'border:0;width:100vw;height:100vh;';
+                      win.document.body.appendChild(iframe);
+                    }
+                  };
+                  return (
+                    <div key={doc.id} className="group flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 border border-border rounded-md bg-muted/20 hover:bg-muted/40 transition-colors" data-testid={`document-${doc.id}`}>
+                      <button
+                        type="button"
+                        onClick={handleOpen}
+                        disabled={!openable}
+                        className="flex items-center gap-2 cursor-pointer disabled:cursor-default"
+                        title={openable ? `Open ${doc.name}` : doc.name}
+                      >
+                        <DocIcon type={doc.fileType} />
+                        <span className="text-xs font-medium truncate max-w-[180px]">{doc.name}</span>
+                        <span className="text-[10px] text-muted-foreground">{doc.size}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { if (window.confirm(`Delete "${doc.name}"? This can't be undone.`)) onRemoveDocument(doc.id); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                        title="Delete document"
+                        data-testid={`button-delete-document-${doc.id}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* ─── Notes (inline, always visible) ─── */}
           <div>
@@ -5808,6 +5889,10 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     setDocuments(prev => ({ ...prev, [leaseId]: [...(prev[leaseId] ?? []), d] }));
   };
 
+  const removeDocument = (leaseId: number, docId: number) => {
+    setDocuments(prev => ({ ...prev, [leaseId]: (prev[leaseId] ?? []).filter(d => d.id !== docId) }));
+  };
+
   const addPhoto = (leaseId: number, label: string, category: LeasePhoto['category'], url: string) => {
     const newPhoto: LeasePhoto = { id: Date.now(), url, label, category };
     setPhotos(prev => ({ ...prev, [leaseId]: [...(prev[leaseId] ?? []), newPhoto] }));
@@ -5908,6 +5993,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           clientLogo={clientLogos[profileLease.tenant] ?? ''}
           onAddNote={(text, author) => addNote(profileLease.id, text, author)}
           onAddDocument={doc => addDocument(profileLease.id, doc)}
+          onRemoveDocument={docId => removeDocument(profileLease.id, docId)}
           onAddPhoto={(label, category, url) => addPhoto(profileLease.id, label, category, url)}
           onRemovePhoto={(photoId) => removePhoto(profileLease.id, photoId)}
           onSetClientLogo={(dataUrl) => setClientLogo(profileLease.tenant, dataUrl)}
