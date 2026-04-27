@@ -612,6 +612,17 @@ function BuildingProfileModal({
                       className="h-8 text-xs"
                     />
                   </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Record ID</label>
+                    <Input
+                      type="text"
+                      placeholder="e.g. LF-2024-001"
+                      value={(lease as any).recordId ?? ''}
+                      onChange={e => onUpdate({ ...lease, recordId: e.target.value } as any)}
+                      className="h-8 text-xs"
+                      data-testid="edit-record-id"
+                    />
+                  </div>
                 </div>
                 {typeof (lease as any).lat === 'number' && typeof (lease as any).lng === 'number' && (
                   <p className="text-[10px] text-muted-foreground mt-2">
@@ -1459,11 +1470,12 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     { key: 'latitude', label: 'Latitude' },
     { key: 'longitude', label: 'Longitude' },
     { key: 'costarId', label: 'CoStar ID' },
+    { key: 'recordId', label: 'Record ID' },
     { key: 'lastNote', label: 'Last Note' },
   ] as const;
   const ALL_COL_KEYS = LEASE_COLUMNS.map(c => c.key);
   // Hide advanced columns by default but keep them available via column picker.
-  const ADVANCED_COL_KEYS = new Set<string>(['leaseStart', 'sqft', 'rentPSF', 'totalRent', 'market', 'submarket', 'broker', 'floors', 'latitude', 'longitude', 'costarId']);
+  const ADVANCED_COL_KEYS = new Set<string>(['leaseStart', 'sqft', 'rentPSF', 'totalRent', 'market', 'submarket', 'broker', 'floors', 'latitude', 'longitude', 'costarId', 'recordId']);
   const DEFAULT_COL_KEYS = ALL_COL_KEYS.filter(k => !ADVANCED_COL_KEYS.has(k));
   const [visibleCols, setVisibleCols] = useState<Set<string>>(
     () => new Set(DEFAULT_COL_KEYS)
@@ -1555,6 +1567,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     const rows = filtered.map((l, idx) => ({
       '#': idx + 1,
       'Record ID': l.id,
+      'Custom Record ID': (l as any).recordId ?? '',
       'Tenant': l.tenant,
       'Address': l.address || '',
       'Type': l.type,
@@ -1908,6 +1921,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                 {isColVisible('latitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Latitude</th>}
                 {isColVisible('longitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Longitude</th>}
                 {isColVisible('costarId') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">CoStar ID</th>}
+                {isColVisible('recordId') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Record ID</th>}
                 {isColVisible('lastNote') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Last Note</th>}
               </tr>
             </thead>
@@ -2135,6 +2149,18 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                       disabled={readOnly}
                       onChange={e => onUpdate({ ...l, costarId: e.target.value } as any)}
                       className="h-7 text-xs tabular-nums px-1.5"
+                    />
+                  </td>}
+                  {/* Record ID */}
+                  {isColVisible('recordId') && <td className="px-2 py-1.5 min-w-[120px]">
+                    <Input
+                      type="text"
+                      placeholder="—"
+                      value={(l as any).recordId ?? ''}
+                      disabled={readOnly}
+                      onChange={e => onUpdate({ ...l, recordId: e.target.value } as any)}
+                      className="h-7 text-xs px-1.5"
+                      data-testid={`row-record-id-${l.id}`}
                     />
                   </td>}
                   {/* Last Note */}
@@ -4458,7 +4484,7 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
 
 // ── Mass Upload Modal ─────────────────────────────────────────────────────────
 
-const CSV_TEMPLATE_FIELDS = ['Record ID','Tenant','Property','Address','SF','Rent PSF','Total Rent','Lease Start','Lease End','Type','Client Lead','Status','Strategy','Stage','Market','Submarket','Floors','Broker','Latitude','Longitude','CoStar ID'] as const;
+const CSV_TEMPLATE_FIELDS = ['Record ID','Custom Record ID','Tenant','Property','Address','SF','Rent PSF','Total Rent','Lease Start','Lease End','Type','Client Lead','Status','Strategy','Stage','Market','Submarket','Floors','Broker','Latitude','Longitude','CoStar ID'] as const;
 const CSV_FIELD_MAP: Record<string, keyof LeaseRecord> = {
   'record id': 'id', 'tenant': 'tenant', 'property': 'property', 'address': 'address',
   'sf': 'sqft', 'rent psf': 'rentPSF', 'total rent': 'totalRent',
@@ -4471,6 +4497,12 @@ const CSV_FIELD_MAP: Record<string, keyof LeaseRecord> = {
   'longitude': 'lng', 'lng': 'lng', 'long': 'lng', 'lon': 'lng',
   'costar id': 'costarId', 'costar': 'costarId', 'costarid': 'costarId',
   'costar property id': 'costarId', 'costar_id': 'costarId',
+  'custom record id': 'recordId' as keyof LeaseRecord,
+  'record id (custom)': 'recordId' as keyof LeaseRecord,
+  'recordid': 'recordId' as keyof LeaseRecord,
+  'record_id': 'recordId' as keyof LeaseRecord,
+  'external id': 'recordId' as keyof LeaseRecord,
+  'external_id': 'recordId' as keyof LeaseRecord,
 };
 
 /** All mappable target fields shown in the field-mapping dropdowns */
@@ -4496,6 +4528,7 @@ const MAPPABLE_FIELDS: { key: keyof LeaseRecord; label: string }[] = [
   { key: 'lat', label: 'Latitude' },
   { key: 'lng', label: 'Longitude' },
   { key: 'costarId', label: 'CoStar ID' },
+  { key: 'recordId' as keyof LeaseRecord, label: 'Custom Record ID' },
 ];
 
 function parseCSVLine(line: string): string[] {
@@ -4554,6 +4587,7 @@ function AddPropertyModal({ existingIds, onAdd, onClose }: {
   const [lat, setLat]             = useState('');
   const [lng, setLng]             = useState('');
   const [costarId, setCostarId]   = useState('');
+  const [recordId, setRecordId]   = useState('');
 
   const canSave = tenant.trim().length > 0 && property.trim().length > 0;
 
@@ -4586,6 +4620,7 @@ function AddPropertyModal({ existingIds, onAdd, onClose }: {
       ...(lat ? { lat: parseFloat(lat) } : {}),
       ...(lng ? { lng: parseFloat(lng) } : {}),
       ...(costarId ? { costarId: costarId.trim() } : {}),
+      ...(recordId ? { recordId: recordId.trim() } : {}),
     } as LeaseRecord;
     onAdd(lease);
     onClose();
@@ -4699,9 +4734,13 @@ function AddPropertyModal({ existingIds, onAdd, onClose }: {
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Longitude</label>
             <Input value={lng} onChange={e => setLng(e.target.value)} placeholder="-84.3862" inputMode="decimal" />
           </div>
-          <div className="col-span-2">
+          <div>
             <label className="text-xs font-medium text-muted-foreground mb-1 block">CoStar ID</label>
             <Input value={costarId} onChange={e => setCostarId(e.target.value)} placeholder="8001373" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Record ID</label>
+            <Input value={recordId} onChange={e => setRecordId(e.target.value)} placeholder="LF-2024-001" data-testid="add-record-id" />
           </div>
         </div>
 
@@ -5956,6 +5995,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
             ...(row.lat !== undefined ? { lat: row.lat } : {}),
             ...(row.lng !== undefined ? { lng: row.lng } : {}),
             ...(row.costarId !== undefined ? { costarId: row.costarId } : {}),
+            ...((row as any).recordId !== undefined ? { recordId: (row as any).recordId } : {}),
           } as LeaseRecord;
           next.push(newRecord);
         }
