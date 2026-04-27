@@ -100,7 +100,7 @@ const SEED_ASSIGNMENTS: PortfolioAssignment[] = [
 ];
 
 const INITIAL_PORTFOLIOS: ClientPortfolio[] = [
-  { id: 1, name: 'Transcend Portfolio',           clientName: 'Transcend CRE',         locations: 15, totalSF: '1,425,000 SF', market: 'National',  lastUpdated: 'Today',       status: 'Active', color: '#3B82F6' },
+  { id: 1, name: 'Learfield Portfolio',            clientName: 'Learfield Communications', locations: 166, totalSF: '389,572 SF',   market: 'National',  lastUpdated: 'Today',       status: 'Active', color: '#3B82F6' },
   { id: 2, name: 'Midwest Industrial Fund',        clientName: 'Apex Capital Partners', locations: 32, totalSF: '4,200,000 SF', market: 'Midwest',   lastUpdated: '2 days ago',  status: 'Active', color: '#8B5CF6' },
   { id: 3, name: 'Southeast Healthcare Portfolio',  clientName: 'MedCore Health Systems', locations: 18, totalSF: '680,000 SF',  market: 'Southeast', lastUpdated: '1 week ago',  status: 'Active', color: '#10B981' },
 ];
