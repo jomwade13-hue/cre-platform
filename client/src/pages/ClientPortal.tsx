@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/tooltip';
 import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
 import { usePersistedState } from '@/lib/usePersistedState';
+import { compressImageFile } from '@/lib/imageUtils';
 import { ImageIcon } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -438,14 +439,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     setDeletePortfolioId(null);
   };
 
-  const handlePortfolioLogoUpload = (id: number, file: File) => {
+  const handlePortfolioLogoUpload = async (id: number, file: File) => {
     if (!file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: dataUrl } : p));
-    };
-    reader.readAsDataURL(file);
+    const dataUrl = await compressImageFile(file, { maxDimension: 480, quality: 0.9 });
+    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: dataUrl } : p));
   };
 
   const handleRemovePortfolioLogo = (id: number) => {
@@ -525,11 +522,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     setAssignments(prev => prev.filter(a => !(a.userId === userId && a.portfolioId === portfolioId)));
   };
 
-  const handleLogoUpload = (file: File) => {
+  const handleLogoUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => setLogo(reader.result as string);
-    reader.readAsDataURL(file);
+    const dataUrl = await compressImageFile(file, { maxDimension: 480, quality: 0.9 });
+    setLogo(dataUrl);
   };
 
   // ── Invite/Team targets ────────────────────────────────────────────────────
@@ -886,12 +882,11 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                       accept="image/*"
                       className="hidden"
                       data-testid="input-new-portfolio-logo"
-                      onChange={e => {
+                      onChange={async e => {
                         const f = e.target.files?.[0];
                         if (!f || !f.type.startsWith('image/')) return;
-                        const reader = new FileReader();
-                        reader.onload = () => setNewLogo(reader.result as string);
-                        reader.readAsDataURL(f);
+                        const dataUrl = await compressImageFile(f, { maxDimension: 480, quality: 0.9 });
+                        setNewLogo(dataUrl);
                       }}
                     />
                   </label>

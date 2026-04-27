@@ -34,6 +34,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useBranding } from '@/components/Layout';
 import { usePersistedState } from '@/lib/usePersistedState';
+import { compressImageFile } from '@/lib/imageUtils';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -280,12 +281,13 @@ function BuildingProfileModal({
   const [newPhotoLabel, setNewPhotoLabel] = useState('');
   const [newPhotoCat, setNewPhotoCat] = useState<LeasePhoto['category']>('building');
   const [newPhotoUrl, setNewPhotoUrl] = useState('');
-  const handlePhotoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => { setNewPhotoUrl(reader.result as string); if (!newPhotoLabel) setNewPhotoLabel(file.name.replace(/\.[^.]+$/, '')); };
-    reader.readAsDataURL(file);
+    // Downscale + JPEG-compress so the data URL fits in localStorage.
+    const dataUrl = await compressImageFile(file, { maxDimension: 1600, quality: 0.82 });
+    setNewPhotoUrl(dataUrl);
+    if (!newPhotoLabel) setNewPhotoLabel(file.name.replace(/\.[^.]+$/, ''));
   };
   const [editOpen, setEditOpen] = useState(false);
   const [newMilestoneLabel, setNewMilestoneLabel] = useState('');
@@ -453,12 +455,12 @@ function BuildingProfileModal({
               <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-dashed border-border text-xs text-muted-foreground hover:bg-muted/50 cursor-pointer transition-colors">
                 <Upload className="w-3.5 h-3.5" />
                 Add Client Logo
-                <input type="file" accept="image/*" className="hidden" onChange={e => {
+                <input type="file" accept="image/*" className="hidden" onChange={async e => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => onSetClientLogo(reader.result as string);
-                  reader.readAsDataURL(file);
+                  // Logos: smaller dimension cap is plenty for branding.
+                  const dataUrl = await compressImageFile(file, { maxDimension: 480, quality: 0.9 });
+                  onSetClientLogo(dataUrl);
                 }} />
               </label>
             )}

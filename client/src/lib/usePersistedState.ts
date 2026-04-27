@@ -36,8 +36,21 @@ export function usePersistedState<T>(
     try {
       if (typeof window === 'undefined' || !window.localStorage) return;
       window.localStorage.setItem(key, JSON.stringify(state));
-    } catch {
-      // Out of quota or disabled — fail silently
+    } catch (err) {
+      // Most common cause: QuotaExceededError from oversized images.
+      // Log so it shows up in the console; alert once so the user knows uploads weren't saved.
+      // eslint-disable-next-line no-console
+      console.error(`[usePersistedState] failed to persist '${key}':`, err);
+      try {
+        const flagKey = `__persist_warned_${key}`;
+        if (!(window as any)[flagKey]) {
+          (window as any)[flagKey] = true;
+          window.alert(
+            `Storage limit reached while saving '${key}'. Recent uploads may not survive a sign-out. ` +
+            'Try removing older photos or uploading smaller images.'
+          );
+        }
+      } catch { /* noop */ }
     }
   }, [key, state]);
 
