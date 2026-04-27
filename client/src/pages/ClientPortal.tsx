@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Building2, Plus, ChevronRight, Briefcase, MapPin, Clock, Users,
   Search, LogOut, Settings, Upload, X, Mail, Shield, ShieldCheck,
@@ -407,6 +407,39 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   const [portfolios, setPortfolios]       = usePersistedState<ClientPortfolio[]>('cre_portfolios', INITIAL_PORTFOLIOS);
   const [users, setUsers]                 = usePersistedState<PortfolioUser[]>('cre_users', SEED_USERS);
   const [assignments, setAssignments]     = usePersistedState<PortfolioAssignment[]>('cre_assignments', SEED_ASSIGNMENTS);
+
+  // Ensure the admin account (jomwade13@icloud.com / CURRENT_USER) is owner of
+  // every portfolio. Promotes any stale viewer/editor records, and adds
+  // missing assignments so newly seeded portfolios are also owned.
+  useEffect(() => {
+    setAssignments(prev => {
+      let changed = false;
+      const next = prev.map(a => {
+        if (a.userId === CURRENT_USER.id && a.role !== 'owner') {
+          changed = true;
+          return { ...a, role: 'owner' as PortfolioRole };
+        }
+        return a;
+      });
+      const ownedPids = new Set(next.filter(a => a.userId === CURRENT_USER.id).map(a => a.portfolioId));
+      portfolios.forEach(p => {
+        if (!ownedPids.has(p.id)) {
+          next.push({
+            userId: CURRENT_USER.id,
+            portfolioId: p.id,
+            role: 'owner',
+            invitedAt: new Date().toISOString().slice(0, 10),
+            invitedBy: 'System',
+          });
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+    // Make sure the admin user record itself exists in the users list.
+    setUsers(prev => prev.find(u => u.id === CURRENT_USER.id) ? prev : [CURRENT_USER, ...prev]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolios.length]);
   const [search, setSearch]               = useState('');
   const [showAddModal, setShowAddModal]   = useState(false);
   const [newName, setNewName]             = useState('');
@@ -469,7 +502,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   };
   const getCurrentUserRole = (pid: number): PortfolioRole => {
     const a = assignments.find(a => a.portfolioId === pid && a.userId === CURRENT_USER.id);
-    return a?.role ?? 'viewer';
+    // The admin account (jomwade13@icloud.com) is always the owner. If no assignment
+    // exists yet — or a stale viewer record is cached — return 'owner' so edit
+    // capabilities aren't blocked.
+    return a?.role ?? 'owner';
   };
 
   // ── Handlers ───────────────────────────────────────────────────────────────

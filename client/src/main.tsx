@@ -11,11 +11,12 @@ if (!window.location.hash) {
 // Existing users have Transcend seed data cached in localStorage/IndexedDB from
 // previous sessions. Clear those keys once so the new Learfield seeds load.
 try {
-  const MIGRATION_KEY = 'cre_data_migration_v_learfield_1';
+  const MIGRATION_KEY = 'cre_data_migration_v_learfield_2';
   if (typeof window !== 'undefined' && window.localStorage && !window.localStorage.getItem(MIGRATION_KEY)) {
     const localKeys = [
       'cre_leases', 'cre_lease_notes', 'cre_qbr_entries',
       'cre_manual_dates', 'cre_milestones', 'cre_portfolios',
+      'cre_assignments', 'cre_users',
     ];
     localKeys.forEach(k => { try { window.localStorage.removeItem(k); } catch { /* noop */ } });
     // Clear IndexedDB-backed keys (documents, photos, client logos)
