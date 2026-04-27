@@ -98,11 +98,12 @@ const calcProgress = (stages: string[], stage: string): number => {
   return Math.round(((idx + 1) / realStages.length) * 100);
 };
 
-/** Format YYYY-MM-DD → MM/DD/YY */
+/** Format YYYY-MM-DD → MM/DD/YYYY (4-digit year per April 2026 standardization) */
 const fmtDateShort = (d: string) => {
   if (!d) return '—';
   const [y, m, day] = d.split('-');
-  return `${m}/${day}/${y.slice(2)}`;
+  if (!y || !m || !day) return d;
+  return `${m}/${day}/${y}`;
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -113,6 +114,8 @@ interface Milestone {
   id: number;
   label: string;
   date: string; // YYYY-MM-DD
+  /** When true, the milestone is logged for record only — don't surface Overdue/Soon badges or include in upcoming-event tracking. */
+  completed?: boolean;
 }
 
 interface ValueAddItem {
@@ -254,7 +257,7 @@ function placeholderGradient(label: string, category: string) {
 // ── Building Profile Modal ────────────────────────────────────────────────────
 
 function BuildingProfileModal({
-  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone
+  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone, onToggleMilestone
 }: {
   lease: LeaseRecord;
   notes: LeaseNote[];
@@ -271,8 +274,9 @@ function BuildingProfileModal({
   onAddToQBR?: (leaseId: number, year: number, newRent: number, services: string[], summary: string, valueAddItems?: ValueAddItem[]) => void;
   qbrEntries?: QBREntry[];
   milestones: Milestone[];
-  onAddMilestone: (label: string, date: string) => void;
+  onAddMilestone: (label: string, date: string, completed?: boolean) => void;
   onRemoveMilestone: (milestoneId: number) => void;
+  onToggleMilestone: (milestoneId: number) => void;
 }) {
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [newNote, setNewNote]         = useState('');
@@ -292,6 +296,7 @@ function BuildingProfileModal({
   const [editOpen, setEditOpen] = useState(false);
   const [newMilestoneLabel, setNewMilestoneLabel] = useState('');
   const [newMilestoneDate, setNewMilestoneDate]   = useState('');
+  const [newMilestoneCompleted, setNewMilestoneCompleted] = useState(false);
   const [showQBRForm, setShowQBRForm] = useState(false);
   const [qbrYear, setQbrYear] = useState(String(new Date().getFullYear()));
   const [qbrNewRent, setQbrNewRent] = useState('');
@@ -576,21 +581,87 @@ function BuildingProfileModal({
             </div>
           )}
 
-          {/* Key metrics */}
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-            {[
-              { label: 'SF',          value: fmtSqft(lease.sqft) },
-              { label: 'Rent PSF',    value: `$${lease.rentPSF.toFixed(2)}` },
-              { label: 'Annual Rent', value: fmt(lease.totalRent) },
-              { label: 'Lease End',   value: lease.leaseEnd },
-              { label: 'Floors',      value: lease.floors },
-            ].map(m => (
-              <div key={m.label} className="border-l-2 border-primary pl-2.5 py-0.5">
-                <p className="text-[10px] text-muted-foreground">{m.label}</p>
-                <p className="text-sm font-bold">{m.value}</p>
+          {/* Key metrics — editable when Edit panel is open */}
+          {editOpen ? (
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              <div className="border-l-2 border-primary pl-2.5 py-0.5">
+                <p className="text-[10px] text-muted-foreground">SF</p>
+                <Input
+                  type="number"
+                  value={lease.sqft}
+                  onChange={e => {
+                    const sqft = Number(e.target.value) || 0;
+                    onUpdate({ ...lease, sqft, totalRent: Math.round(sqft * lease.rentPSF) });
+                  }}
+                  className="h-7 text-xs px-2 tabular-nums font-semibold"
+                />
               </div>
-            ))}
-          </div>
+              <div className="border-l-2 border-primary pl-2.5 py-0.5">
+                <p className="text-[10px] text-muted-foreground">Rent PSF</p>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={lease.rentPSF}
+                  onChange={e => {
+                    const rentPSF = Number(e.target.value) || 0;
+                    onUpdate({ ...lease, rentPSF, totalRent: Math.round(lease.sqft * rentPSF) });
+                  }}
+                  className="h-7 text-xs px-2 tabular-nums font-semibold"
+                />
+              </div>
+              <div className="border-l-2 border-primary pl-2.5 py-0.5">
+                <p className="text-[10px] text-muted-foreground">Annual Rent</p>
+                <Input
+                  type="number"
+                  value={lease.totalRent}
+                  onChange={e => onUpdate({ ...lease, totalRent: Number(e.target.value) || 0 })}
+                  className="h-7 text-xs px-2 tabular-nums font-semibold"
+                />
+              </div>
+              <div className="border-l-2 border-primary pl-2.5 py-0.5">
+                <p className="text-[10px] text-muted-foreground">Lease End</p>
+                <Input
+                  type="date"
+                  value={lease.leaseEnd}
+                  onChange={e => onUpdate({ ...lease, leaseEnd: e.target.value })}
+                  className="h-7 text-xs px-2 tabular-nums font-semibold"
+                />
+              </div>
+              <div className="border-l-2 border-primary pl-2.5 py-0.5">
+                <p className="text-[10px] text-muted-foreground">Floors</p>
+                <Input
+                  value={lease.floors}
+                  onChange={e => onUpdate({ ...lease, floors: e.target.value })}
+                  className="h-7 text-xs px-2 font-semibold"
+                />
+              </div>
+              <div className="border-l-2 border-primary pl-2.5 py-0.5">
+                <p className="text-[10px] text-muted-foreground">MMR Date</p>
+                <Input
+                  placeholder="e.g. 2027 or N/A"
+                  value={(lease as any).mmrDate ?? ''}
+                  onChange={e => onUpdate({ ...lease, mmrDate: e.target.value } as any)}
+                  className="h-7 text-xs px-2 font-semibold"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {[
+                { label: 'SF',          value: fmtSqft(lease.sqft) },
+                { label: 'Rent PSF',    value: `$${lease.rentPSF.toFixed(2)}` },
+                { label: 'Annual Rent', value: fmt(lease.totalRent) },
+                { label: 'Lease End',   value: fmtDateShort(lease.leaseEnd) },
+                { label: 'Floors',      value: lease.floors },
+                { label: 'MMR Date',    value: ((lease as any).mmrDate && String((lease as any).mmrDate).trim()) ? (lease as any).mmrDate : 'N/A' },
+              ].map(m => (
+                <div key={m.label} className="border-l-2 border-primary pl-2.5 py-0.5">
+                  <p className="text-[10px] text-muted-foreground">{m.label}</p>
+                  <p className="text-sm font-bold tabular-nums">{m.value}</p>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Stage progress */}
           {stages.length > 0 && (
@@ -623,15 +694,27 @@ function BuildingProfileModal({
             {milestones.length > 0 && (
               <div className="space-y-1.5 mb-3">
                 {milestones.sort((a, b) => a.date < b.date ? -1 : 1).map(ms => {
-                  const isOverdue = ms.date < new Date().toISOString().slice(0, 10);
-                  const isUpcoming = !isOverdue && ms.date <= new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+                  const isCompleted = ms.completed === true;
+                  const isOverdue = !isCompleted && ms.date < new Date().toISOString().slice(0, 10);
+                  const isUpcoming = !isCompleted && !isOverdue && ms.date <= new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
                   return (
                     <div key={ms.id} className="flex items-center gap-2 text-xs group">
-                      <Diamond className={cn('w-3 h-3 shrink-0', isOverdue ? 'text-red-500' : isUpcoming ? 'text-amber-500' : 'text-blue-500')} />
-                      <span className="font-medium flex-1 truncate">{ms.label}</span>
-                      <span className={cn('tabular-nums', isOverdue ? 'text-red-500 font-medium' : 'text-muted-foreground')}>{fmtDateShort(ms.date)}</span>
-                      {isOverdue && <Badge className="text-[9px] px-1 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0">Overdue</Badge>}
-                      {isUpcoming && !isOverdue && <Badge className="text-[9px] px-1 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0">Soon</Badge>}
+                      <button
+                        type="button"
+                        onClick={() => onToggleMilestone(ms.id)}
+                        title={isCompleted ? 'Mark as not complete' : 'Mark as complete (logged for record only)'}
+                        className="shrink-0">
+                        {isCompleted ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                        ) : (
+                          <Diamond className={cn('w-3 h-3', isOverdue ? 'text-red-500' : isUpcoming ? 'text-amber-500' : 'text-blue-500')} />
+                        )}
+                      </button>
+                      <span className={cn('font-medium flex-1 truncate', isCompleted && 'line-through text-muted-foreground')}>{ms.label}</span>
+                      <span className={cn('tabular-nums', isCompleted ? 'text-muted-foreground' : isOverdue ? 'text-red-500 font-medium' : 'text-muted-foreground')}>{fmtDateShort(ms.date)}</span>
+                      {isCompleted && <Badge className="text-[9px] px-1 py-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">Logged</Badge>}
+                      {!isCompleted && isOverdue && <Badge className="text-[9px] px-1 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0">Overdue</Badge>}
+                      {!isCompleted && isUpcoming && !isOverdue && <Badge className="text-[9px] px-1 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0">Soon</Badge>}
                       <button onClick={() => onRemoveMilestone(ms.id)}
                         className="text-muted-foreground/40 hover:text-destructive opacity-0 group-hover:opacity-100 transition-all">
                         <X className="w-3 h-3" />
@@ -641,13 +724,26 @@ function BuildingProfileModal({
                 })}
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <Input placeholder="Milestone name" value={newMilestoneLabel} onChange={e => setNewMilestoneLabel(e.target.value)} className="h-7 text-xs flex-1" />
-              <Input type="date" value={newMilestoneDate} onChange={e => setNewMilestoneDate(e.target.value)} className="h-7 text-xs w-36" />
-              <Button size="sm" className="h-7 text-xs px-2" disabled={!newMilestoneLabel.trim() || !newMilestoneDate}
-                onClick={() => { onAddMilestone(newMilestoneLabel.trim(), newMilestoneDate); setNewMilestoneLabel(''); setNewMilestoneDate(''); }}>
-                <Plus className="w-3 h-3" />
-              </Button>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-2">
+                <Input placeholder="Milestone name" value={newMilestoneLabel} onChange={e => setNewMilestoneLabel(e.target.value)} className="h-7 text-xs flex-1" />
+                <Input type="date" value={newMilestoneDate} onChange={e => setNewMilestoneDate(e.target.value)} className="h-7 text-xs w-36" />
+                <Button size="sm" className="h-7 text-xs px-2" disabled={!newMilestoneLabel.trim() || !newMilestoneDate}
+                  onClick={() => {
+                    onAddMilestone(newMilestoneLabel.trim(), newMilestoneDate, newMilestoneCompleted);
+                    setNewMilestoneLabel(''); setNewMilestoneDate(''); setNewMilestoneCompleted(false);
+                  }}>
+                  <Plus className="w-3 h-3" />
+                </Button>
+              </div>
+              <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer select-none">
+                <Checkbox
+                  checked={newMilestoneCompleted}
+                  onCheckedChange={v => setNewMilestoneCompleted(v === true)}
+                  className="h-3 w-3"
+                />
+                Log as complete (record only — won't surface as upcoming or overdue)
+              </label>
             </div>
           </div>
 
@@ -1967,9 +2063,11 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
         activeLeases.forEach(l => {
           (milestones[l.id] ?? []).forEach(ms => allMs.push({ ...ms, leaseId: l.id, tenant: l.tenant, property: l.property }));
         });
-        const overdue  = allMs.filter(m => m.date < todayStr);
-        const upcoming = allMs.filter(m => m.date >= todayStr && m.date <= soonStr);
-        const onTrack  = allMs.filter(m => m.date > soonStr);
+        // Completed milestones are logged for record only — exclude from Overdue/Upcoming/On Track buckets.
+        const activeMs = allMs.filter(m => m.completed !== true);
+        const overdue  = activeMs.filter(m => m.date < todayStr);
+        const upcoming = activeMs.filter(m => m.date >= todayStr && m.date <= soonStr);
+        const onTrack  = activeMs.filter(m => m.date > soonStr);
 
         if (allMs.length === 0) return null;
 
@@ -2011,21 +2109,27 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
             {allMs.length > 0 && (
               <div className="max-h-[200px] overflow-y-auto space-y-1">
                 {allMs.sort((a, b) => a.date < b.date ? -1 : 1).map(ms => {
-                  const isOverdue = ms.date < todayStr;
-                  const isUpcoming = !isOverdue && ms.date <= soonStr;
+                  const isCompleted = ms.completed === true;
+                  const isOverdue = !isCompleted && ms.date < todayStr;
+                  const isUpcoming = !isCompleted && !isOverdue && ms.date <= soonStr;
                   return (
                     <div key={ms.id} className={cn('flex items-center gap-3 px-3 py-1.5 rounded-md text-xs',
-                      isOverdue ? 'bg-red-50/50 dark:bg-red-950/20' : isUpcoming ? 'bg-amber-50/50 dark:bg-amber-950/20' : 'bg-muted/30'
+                      isCompleted ? 'bg-muted/30' : isOverdue ? 'bg-red-50/50 dark:bg-red-950/20' : isUpcoming ? 'bg-amber-50/50 dark:bg-amber-950/20' : 'bg-muted/30'
                     )}>
-                      <Diamond className={cn('w-3 h-3 shrink-0',
-                        isOverdue ? 'text-red-500 fill-red-500' : isUpcoming ? 'text-amber-500 fill-amber-500' : 'text-blue-500 fill-blue-500'
-                      )} />
-                      <span className="font-medium flex-1 truncate">{ms.label}</span>
+                      {isCompleted ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                      ) : (
+                        <Diamond className={cn('w-3 h-3 shrink-0',
+                          isOverdue ? 'text-red-500 fill-red-500' : isUpcoming ? 'text-amber-500 fill-amber-500' : 'text-blue-500 fill-blue-500'
+                        )} />
+                      )}
+                      <span className={cn('font-medium flex-1 truncate', isCompleted && 'line-through text-muted-foreground')}>{ms.label}</span>
                       <span className="text-muted-foreground truncate max-w-[140px]">{ms.tenant} — {ms.property}</span>
-                      <span className={cn('tabular-nums shrink-0', isOverdue ? 'text-red-600 font-semibold dark:text-red-400' : 'text-muted-foreground')}>{fmtDateShort(ms.date)}</span>
-                      {isOverdue && <Badge className="text-[9px] px-1 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0 shrink-0">Overdue</Badge>}
-                      {isUpcoming && <Badge className="text-[9px] px-1 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 shrink-0">Soon</Badge>}
-                      {!isOverdue && !isUpcoming && <Badge className="text-[9px] px-1 py-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 shrink-0">On Track</Badge>}
+                      <span className={cn('tabular-nums shrink-0', isCompleted ? 'text-muted-foreground' : isOverdue ? 'text-red-600 font-semibold dark:text-red-400' : 'text-muted-foreground')}>{fmtDateShort(ms.date)}</span>
+                      {isCompleted && <Badge className="text-[9px] px-1 py-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 shrink-0">Logged</Badge>}
+                      {!isCompleted && isOverdue && <Badge className="text-[9px] px-1 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0 shrink-0">Overdue</Badge>}
+                      {!isCompleted && isUpcoming && <Badge className="text-[9px] px-1 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0 shrink-0">Soon</Badge>}
+                      {!isCompleted && !isOverdue && !isUpcoming && <Badge className="text-[9px] px-1 py-0 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 shrink-0">On Track</Badge>}
                     </div>
                   );
                 })}
@@ -2515,8 +2619,8 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
         doc.text(lease.stage || '', bx + 4, y + barH / 2 + 2);
       }
 
-      // Milestone diamonds on bar
-      (milestones[lease.id] ?? []).forEach(ms => {
+      // Milestone diamonds on bar (skip completed milestones — logged for record only)
+      (milestones[lease.id] ?? []).filter(ms => ms.completed !== true).forEach(ms => {
         const msPct = toPercentFull(ms.date) / 100;
         const mx = chartX + msPct * chartW;
         const isOverdue = ms.date < todayStr;
@@ -2734,7 +2838,7 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                           {lease.stage}
                         </div>
                       )}
-                      {(milestones[lease.id] ?? []).map(ms => {
+                      {(milestones[lease.id] ?? []).filter(ms => ms.completed !== true).map(ms => {
                         const msPct = toPercent(ms.date);
                         if (msPct < -2 || msPct > 102) return null;
                         const isOverdue = ms.date < today.toISOString().slice(0, 10);
@@ -5413,10 +5517,10 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const { globalLogo: dashboardLogo, setGlobalLogo: setDashboardLogo } = useBranding();
   const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
 
-  const addMilestone = (leaseId: number, label: string, date: string) => {
+  const addMilestone = (leaseId: number, label: string, date: string, completed?: boolean) => {
     setMilestones(prev => {
       const existing = prev[leaseId] ?? [];
-      return { ...prev, [leaseId]: [...existing, { id: Date.now(), label, date }] };
+      return { ...prev, [leaseId]: [...existing, { id: Date.now(), label, date, completed: completed === true }] };
     });
   };
 
@@ -5424,6 +5528,16 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     setMilestones(prev => {
       const existing = prev[leaseId] ?? [];
       return { ...prev, [leaseId]: existing.filter(m => m.id !== milestoneId) };
+    });
+  };
+
+  const toggleMilestone = (leaseId: number, milestoneId: number) => {
+    setMilestones(prev => {
+      const existing = prev[leaseId] ?? [];
+      return {
+        ...prev,
+        [leaseId]: existing.map(m => m.id === milestoneId ? { ...m, completed: !(m.completed === true) } : m),
+      };
     });
   };
 
@@ -5556,8 +5670,9 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           onUpdate={updateLease}
           qbrEntries={qbrEntries}
           milestones={milestones[profileLease.id] ?? []}
-          onAddMilestone={(label, date) => addMilestone(profileLease.id, label, date)}
+          onAddMilestone={(label, date, completed) => addMilestone(profileLease.id, label, date, completed)}
           onRemoveMilestone={(msId) => removeMilestone(profileLease.id, msId)}
+          onToggleMilestone={(msId) => toggleMilestone(profileLease.id, msId)}
           onAddToQBR={(leaseId, year, newRent, services, summary, valueAddItems) => {
             const lease = leasesData.find(l => l.id === leaseId);
             if (!lease) return;
