@@ -496,6 +496,43 @@ function BuildingProfileModal({
           {/* Edit panel (inline toggle) */}
           {editOpen && (
             <div className="bg-muted/30 rounded-lg p-4 border border-border">
+              {/* Property Details — free-text fields */}
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Property Details</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Tenant</label>
+                    <Input value={lease.tenant} onChange={e => onUpdate({ ...lease, tenant: e.target.value })} className="h-8 text-xs" data-testid="edit-tenant" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Property Name</label>
+                    <Input value={lease.property} onChange={e => onUpdate({ ...lease, property: e.target.value })} className="h-8 text-xs" data-testid="edit-property" />
+                  </div>
+                  <div className="col-span-2 sm:col-span-1">
+                    <label className="text-xs text-muted-foreground mb-1 block">Address</label>
+                    <Input value={lease.address || ''} onChange={e => onUpdate({ ...lease, address: e.target.value })} className="h-8 text-xs" data-testid="edit-address" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Market</label>
+                    <Input value={lease.market || ''} onChange={e => onUpdate({ ...lease, market: e.target.value })} className="h-8 text-xs" data-testid="edit-market" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Submarket</label>
+                    <Input value={lease.submarket || ''} onChange={e => onUpdate({ ...lease, submarket: e.target.value })} className="h-8 text-xs" data-testid="edit-submarket" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Broker</label>
+                    <Input value={lease.broker || ''} onChange={e => onUpdate({ ...lease, broker: e.target.value })} className="h-8 text-xs" data-testid="edit-broker" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground mb-1 block">Lease Start</label>
+                    <Input type="date" value={lease.leaseStart || ''} onChange={e => onUpdate({ ...lease, leaseStart: e.target.value })} className="h-8 text-xs tabular-nums" data-testid="edit-lease-start" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-border">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Classification</p>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {[
                   { label: 'Type',        field: 'type',       options: PROPERTY_TYPES },
@@ -527,6 +564,7 @@ function BuildingProfileModal({
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
               </div>
 
               {/* Location & CoStar fields */}
@@ -1329,14 +1367,23 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     { key: 'strategy', label: 'Strategy' },
     { key: 'expiration', label: 'Expiration' },
     { key: 'stage', label: 'Stage' },
+    { key: 'leaseStart', label: 'Lease Start' },
+    { key: 'sqft', label: 'SF' },
+    { key: 'rentPSF', label: 'Rent PSF' },
+    { key: 'totalRent', label: 'Annual Rent' },
+    { key: 'market', label: 'Market' },
+    { key: 'submarket', label: 'Submarket' },
+    { key: 'broker', label: 'Broker' },
+    { key: 'floors', label: 'Floors' },
     { key: 'latitude', label: 'Latitude' },
     { key: 'longitude', label: 'Longitude' },
     { key: 'costarId', label: 'CoStar ID' },
     { key: 'lastNote', label: 'Last Note' },
   ] as const;
   const ALL_COL_KEYS = LEASE_COLUMNS.map(c => c.key);
-  // Hide lat/lng/costarId by default (advanced columns) but keep available via column picker
-  const DEFAULT_COL_KEYS = ALL_COL_KEYS.filter(k => k !== 'latitude' && k !== 'longitude' && k !== 'costarId');
+  // Hide advanced columns by default but keep them available via column picker.
+  const ADVANCED_COL_KEYS = new Set<string>(['leaseStart', 'sqft', 'rentPSF', 'totalRent', 'market', 'submarket', 'broker', 'floors', 'latitude', 'longitude', 'costarId']);
+  const DEFAULT_COL_KEYS = ALL_COL_KEYS.filter(k => !ADVANCED_COL_KEYS.has(k));
   const [visibleCols, setVisibleCols] = useState<Set<string>>(
     () => new Set(DEFAULT_COL_KEYS)
   );
@@ -1769,6 +1816,14 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                   <span className="flex items-center gap-1">Expiration <SortIcon col="leaseEnd" /></span>
                 </th>}
                 {isColVisible('stage') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Stage</th>}
+                {isColVisible('leaseStart') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Lease Start</th>}
+                {isColVisible('sqft') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">SF</th>}
+                {isColVisible('rentPSF') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Rent PSF</th>}
+                {isColVisible('totalRent') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Annual Rent</th>}
+                {isColVisible('market') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Market</th>}
+                {isColVisible('submarket') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Submarket</th>}
+                {isColVisible('broker') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Broker</th>}
+                {isColVisible('floors') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Floors</th>}
                 {isColVisible('latitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Latitude</th>}
                 {isColVisible('longitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Longitude</th>}
                 {isColVisible('costarId') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">CoStar ID</th>}
@@ -1863,6 +1918,98 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     ) : (
                       <span className="px-2 text-xs text-muted-foreground">—</span>
                     )}
+                  </td>}
+                  {/* Lease Start */}
+                  {isColVisible('leaseStart') && <td className="px-3 py-2.5 tabular-nums whitespace-nowrap font-medium text-xs">
+                    <DoubleClickToEdit
+                      type="date"
+                      value={l.leaseStart}
+                      display={v => fmtDateShort(v == null ? '' : String(v))}
+                      onSave={v => handleFieldUpdate(l, 'leaseStart' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Lease Start"
+                      testId={`leaseStart-${l.id}`}
+                    />
+                  </td>}
+                  {/* SF */}
+                  {isColVisible('sqft') && <td className="px-2 py-1.5 min-w-[100px]">
+                    <Input
+                      type="number"
+                      placeholder="—"
+                      value={l.sqft || ''}
+                      disabled={readOnly}
+                      onChange={e => {
+                        const sqft = Number(e.target.value) || 0;
+                        onUpdate({ ...l, sqft, totalRent: Math.round(sqft * l.rentPSF) });
+                      }}
+                      className="h-7 text-xs tabular-nums px-1.5"
+                    />
+                  </td>}
+                  {/* Rent PSF */}
+                  {isColVisible('rentPSF') && <td className="px-2 py-1.5 min-w-[90px]">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="—"
+                      value={l.rentPSF || ''}
+                      disabled={readOnly}
+                      onChange={e => {
+                        const rentPSF = Number(e.target.value) || 0;
+                        onUpdate({ ...l, rentPSF, totalRent: Math.round(l.sqft * rentPSF) });
+                      }}
+                      className="h-7 text-xs tabular-nums px-1.5"
+                    />
+                  </td>}
+                  {/* Annual Rent */}
+                  {isColVisible('totalRent') && <td className="px-2 py-1.5 min-w-[110px]">
+                    <Input
+                      type="number"
+                      placeholder="—"
+                      value={l.totalRent || ''}
+                      disabled={readOnly}
+                      onChange={e => onUpdate({ ...l, totalRent: Number(e.target.value) || 0 })}
+                      className="h-7 text-xs tabular-nums px-1.5"
+                    />
+                  </td>}
+                  {/* Market */}
+                  {isColVisible('market') && <td className="px-3 py-2.5 text-xs whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.market || ''}
+                      onSave={v => handleFieldUpdate(l, 'market' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Market"
+                      testId={`market-${l.id}`}
+                    />
+                  </td>}
+                  {/* Submarket */}
+                  {isColVisible('submarket') && <td className="px-3 py-2.5 text-xs whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.submarket || ''}
+                      onSave={v => handleFieldUpdate(l, 'submarket' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Submarket"
+                      testId={`submarket-${l.id}`}
+                    />
+                  </td>}
+                  {/* Broker */}
+                  {isColVisible('broker') && <td className="px-3 py-2.5 text-xs whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.broker || ''}
+                      onSave={v => handleFieldUpdate(l, 'broker' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Broker"
+                      testId={`broker-${l.id}`}
+                    />
+                  </td>}
+                  {/* Floors */}
+                  {isColVisible('floors') && <td className="px-3 py-2.5 text-xs whitespace-normal break-words">
+                    <DoubleClickToEdit
+                      value={l.floors || ''}
+                      onSave={v => handleFieldUpdate(l, 'floors' as any, v)}
+                      disabled={readOnly}
+                      ariaLabel="Floors"
+                      testId={`floors-${l.id}`}
+                    />
                   </td>}
                   {/* Latitude */}
                   {isColVisible('latitude') && <td className="px-2 py-1.5 min-w-[110px]">
