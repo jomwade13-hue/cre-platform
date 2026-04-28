@@ -483,6 +483,53 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // One-time recovery: rebuild the user's custom "Learfield Portfolio (Custom)"
+  // card. The portfolio card itself was deleted, but all underlying lease data,
+  // notes, photos, floor plans, and PDF documents live in app-wide storage keys
+  // (cre_leases, cre_lease_notes, cre_lease_photos, cre_lease_documents,
+  // cre_milestones, cre_manual_dates) and were never touched by the delete
+  // handler. Re-adding the portfolio card surfaces all of that content again.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const KEY = 'cre_custom_portfolio_recovery_v1';
+    if (window.localStorage.getItem(KEY) === 'done') return;
+    setPortfolios(prev => {
+      // Don't double-add if a card with this name already exists.
+      if (prev.some(p => p.name === 'Learfield Portfolio (Custom)')) {
+        window.localStorage.setItem(KEY, 'done');
+        return prev;
+      }
+      // Compute fresh stats from cre_leases (all your custom data).
+      let locations = 0;
+      let totalSF = '0 SF';
+      try {
+        const raw = window.localStorage.getItem('cre_leases');
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr)) {
+            locations = arr.length;
+            const totalSf = arr.reduce((s: number, l: any) => s + (Number(l?.sf) || 0), 0);
+            totalSF = `${totalSf.toLocaleString()} SF`;
+          }
+        }
+      } catch { /* ignore */ }
+      const restored: ClientPortfolio = {
+        id: Date.now(),
+        name: 'Learfield Portfolio (Custom)',
+        clientName: 'Learfield Communications',
+        locations,
+        totalSF,
+        market: 'National',
+        lastUpdated: 'Restored',
+        status: 'Active',
+        color: '#10B981',
+      };
+      window.localStorage.setItem(KEY, 'done');
+      return [...prev, restored];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [search, setSearch]               = useState('');
   const [showAddModal, setShowAddModal]   = useState(false);
   const [newName, setNewName]             = useState('');
