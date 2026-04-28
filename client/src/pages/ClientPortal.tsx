@@ -440,6 +440,49 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     setUsers(prev => prev.find(u => u.id === CURRENT_USER.id) ? prev : [CURRENT_USER, ...prev]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolios.length]);
+
+  // One-time recovery: if a seeded portfolio (Learfield, Midwest, Southeast)
+  // was accidentally deleted, restore it on next load. Underlying lease data
+  // for the Learfield Portfolio still lives in cre_leases / IndexedDB, so the
+  // portfolio card just needs to be re-added to the list. This runs once per
+  // browser (gated by a localStorage flag) so the user can still intentionally
+  // delete a seed portfolio later if they want to.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const RECOVERY_KEY = 'cre_seed_portfolio_recovery_v1';
+    if (window.localStorage.getItem(RECOVERY_KEY) === 'done') return;
+    setPortfolios(prev => {
+      const byId = new Map(prev.map(p => [p.id, p]));
+      let changed = false;
+      // Recompute Learfield stats from cre_leases so the card reflects reality.
+      let learfieldStats: { locations: number; totalSF: string } | null = null;
+      try {
+        const raw = window.localStorage.getItem('cre_leases');
+        if (raw) {
+          const arr = JSON.parse(raw);
+          if (Array.isArray(arr) && arr.length > 0) {
+            const totalSf = arr.reduce((s: number, l: any) => s + (Number(l?.sf) || 0), 0);
+            learfieldStats = {
+              locations: arr.length,
+              totalSF: `${totalSf.toLocaleString()} SF`,
+            };
+          }
+        }
+      } catch { /* ignore */ }
+      INITIAL_PORTFOLIOS.forEach(seed => {
+        if (!byId.has(seed.id)) {
+          const restored: ClientPortfolio = seed.id === 1 && learfieldStats
+            ? { ...seed, locations: learfieldStats.locations, totalSF: learfieldStats.totalSF, lastUpdated: 'Restored' }
+            : { ...seed, lastUpdated: 'Restored' };
+          byId.set(seed.id, restored);
+          changed = true;
+        }
+      });
+      window.localStorage.setItem(RECOVERY_KEY, 'done');
+      return changed ? Array.from(byId.values()) : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [search, setSearch]               = useState('');
   const [showAddModal, setShowAddModal]   = useState(false);
   const [newName, setNewName]             = useState('');
