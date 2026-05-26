@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import 'leaflet/dist/leaflet.css';
-import { startAutoSnapshot } from './lib/snapshots';
+import { startAutoSnapshot, startAutoDownload } from './lib/snapshots';
 
 if (!window.location.hash) {
   window.location.hash = "#/";
@@ -41,3 +41,7 @@ createRoot(document.getElementById("root")!).render(<App />);
 // Auto-snapshot loop — every 10 minutes, snapshot the dashboard if data changed.
 // Users can also create manual snapshots via the Version History menu.
 try { startAutoSnapshot(); } catch { /* best-effort */ }
+
+// Daily auto-download — once per day, save a JSON backup to the user's
+// Downloads folder. Off-device safety net.
+try { startAutoDownload(); } catch { /* best-effort */ }

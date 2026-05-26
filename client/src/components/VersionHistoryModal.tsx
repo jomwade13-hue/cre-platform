@@ -7,10 +7,14 @@ import {
   exportSnapshotJSON,
   formatBytes,
   formatSnapshotTime,
+  getAutoDownloadLastRun,
   importSnapshotJSON,
+  isAutoDownloadEnabled,
   listSnapshots,
   MAX_SNAPSHOTS,
   restoreSnapshot,
+  runAutoDownloadNow,
+  setAutoDownloadEnabled,
   type SnapshotSummary,
 } from '@/lib/snapshots';
 
@@ -24,6 +28,8 @@ export function VersionHistoryModal({ open, onOpenChange }: Props) {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoDlOn, setAutoDlOn] = useState<boolean>(true);
+  const [autoDlLast, setAutoDlLast] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -38,6 +44,8 @@ export function VersionHistoryModal({ open, onOpenChange }: Props) {
   useEffect(() => {
     if (open) {
       setError(null);
+      setAutoDlOn(isAutoDownloadEnabled());
+      setAutoDlLast(getAutoDownloadLastRun());
       refresh();
     }
   }, [open, refresh]);
@@ -124,6 +132,25 @@ export function VersionHistoryModal({ open, onOpenChange }: Props) {
     fileInputRef.current?.click();
   };
 
+  const onToggleAutoDl = (checked: boolean) => {
+    setAutoDlOn(checked);
+    setAutoDownloadEnabled(checked);
+  };
+
+  const onDownloadNow = async () => {
+    setBusyId('download-now');
+    setError(null);
+    try {
+      await runAutoDownloadNow({ label: 'Manual download' });
+      setAutoDlLast(getAutoDownloadLastRun());
+      await refresh();
+    } catch (e: any) {
+      setError(e?.message || 'Failed to download backup');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const onImportFile = async (file: File) => {
     setBusyId('import');
     setError(null);
@@ -150,6 +177,41 @@ export function VersionHistoryModal({ open, onOpenChange }: Props) {
           Restore the dashboard to any previous saved version. Snapshots capture all
           properties, notes, photos, floor plans, PDFs, milestones, and custom fields.
           Auto-snapshots run every 10 minutes when data changes. The most recent {MAX_SNAPSHOTS} are kept.
+        </div>
+
+        <div className="mb-4 p-3 rounded border bg-blue-50/40 dark:bg-white/[0.02]">
+          <div className="flex items-start gap-3">
+            <label className="flex items-start gap-2 flex-1 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={autoDlOn}
+                onChange={e => onToggleAutoDl(e.target.checked)}
+                data-testid="toggle-auto-download"
+              />
+              <div className="text-sm">
+                <div className="font-medium">Daily backup to Downloads folder</div>
+                <div className="text-xs text-gray-600 mt-0.5">
+                  Once per day, the app saves a JSON backup of all your data
+                  (cre-backup-YYYY-MM-DD.json) to your computer's Downloads folder.
+                  Keep these files somewhere safe — they're an off-device backup
+                  you can re-import any time.
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Last download: {autoDlLast ? formatSnapshotTime(autoDlLast) : 'Never'}
+                </div>
+              </div>
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onDownloadNow}
+              disabled={busyId === 'download-now'}
+              data-testid="button-download-now"
+            >
+              {busyId === 'download-now' ? 'Saving…' : 'Download backup now'}
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2 mb-4">

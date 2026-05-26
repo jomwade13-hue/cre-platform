@@ -36,6 +36,11 @@ const DB_VERSION = 2; // bumped from 1 to add the snapshots store
 
 export const MAX_SNAPSHOTS = 30;
 export const AUTO_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+export const AUTO_DOWNLOAD_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Settings keys
+const LS_AUTO_DL_ENABLED = 'cre_auto_download_enabled';
+const LS_AUTO_DL_LAST = 'cre_auto_download_last_run';
 
 // IndexedDB-backed keys we know about. We also enumerate everything in the
 // kv store at snapshot time to catch keys not listed here.
@@ -402,6 +407,100 @@ export function formatSnapshotTime(ts: number): string {
   const ap = hh >= 12 ? 'PM' : 'AM';
   hh = hh % 12 || 12;
   return `${mm}/${dd}/${yyyy} ${hh}:${mi} ${ap}`;
+}
+
+// ── Auto-download settings & loop ──────────────────────────────
+export function isAutoDownloadEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  const v = window.localStorage.getItem(LS_AUTO_DL_ENABLED);
+  // Default: enabled (the user opted into this feature explicitly).
+  return v === null ? true : v === 'true';
+}
+
+export function setAutoDownloadEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(LS_AUTO_DL_ENABLED, String(enabled));
+}
+
+export function getAutoDownloadLastRun(): number | null {
+  if (typeof window === 'undefined') return null;
+  const v = window.localStorage.getItem(LS_AUTO_DL_LAST);
+  return v ? Number(v) : null;
+}
+
+function triggerDownload(filename: string, json: string): void {
+  try {
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[snapshots] auto-download failed:', err);
+  }
+}
+
+/**
+ * Daily auto-download loop. On app boot, schedules a one-time check after
+ * 60 seconds (so the page is fully interactive). If 24+ hours have passed
+ * since the last auto-download AND auto-download is enabled, creates a
+ * fresh snapshot and triggers a browser download. The file lands in the
+ * user's Downloads folder named `cre-backup-YYYY-MM-DD.json`.
+ *
+ * Subsequent days: a setInterval re-checks every hour.
+ *
+ * To trigger an immediate download (for the "Download backup now" button),
+ * call `runAutoDownloadNow()` directly.
+ */
+let autoDlTimer: number | null = null;
+
+export function startAutoDownload(): void {
+  if (typeof window === 'undefined' || autoDlTimer != null) return;
+
+  const tryRun = async () => {
+    try {
+      if (!isAutoDownloadEnabled()) return;
+      const last = getAutoDownloadLastRun();
+      if (last && Date.now() - last < AUTO_DOWNLOAD_INTERVAL_MS) return;
+      await runAutoDownloadNow({ silent: true });
+    } catch { /* swallow */ }
+  };
+
+  // Initial check after 60s (don't run during first paint).
+  window.setTimeout(tryRun, 60 * 1000);
+  // Re-check hourly.
+  autoDlTimer = window.setInterval(tryRun, 60 * 60 * 1000);
+}
+
+export async function runAutoDownloadNow(
+  options: { silent?: boolean; label?: string } = {}
+): Promise<{ filename: string; sizeBytes: number }> {
+  // Take a fresh snapshot (so the download is current) and label it.
+  const summary = await createSnapshot({
+    label: options.label || 'Daily auto-backup',
+    autoSaved: true,
+  });
+  const json = await exportSnapshotJSON(summary.id);
+  const d = new Date(summary.createdAt);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const filename = `cre-backup-${yyyy}-${mm}-${dd}.json`;
+  triggerDownload(filename, json);
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(LS_AUTO_DL_LAST, String(summary.createdAt));
+  }
+  if (!options.silent) {
+    // eslint-disable-next-line no-console
+    console.log(`[snapshots] downloaded ${filename} (${summary.sizeBytes} bytes)`);
+  }
+  return { filename, sizeBytes: summary.sizeBytes };
 }
 
 export function formatBytes(n: number): string {
