@@ -3,7 +3,7 @@ import {
   Building2, Plus, ChevronRight, Briefcase, MapPin, Clock, Users,
   Search, LogOut, Settings, Upload, X, Mail, Shield, ShieldCheck,
   Eye, Edit3, Trash2, UserPlus, Crown, ChevronDown, Check, Copy,
-  MoreHorizontal, UserX, ArrowUpRight, Sun, Moon
+  MoreHorizontal, UserX, ArrowUpRight, Sun, Moon, History
 } from 'lucide-react';
 import { useTheme } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,7 @@ import { usePersistedState } from '@/lib/usePersistedState';
 import { compressImageFile } from '@/lib/imageUtils';
 import { ImageIcon } from 'lucide-react';
 import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
+import VersionHistoryModal from '@/components/VersionHistoryModal';
 
 // Lightweight lease shape for address-autocomplete in ClientPortal.
 interface PortalLease {
@@ -532,6 +533,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   }, []);
   const [search, setSearch]               = useState('');
   const [showAddModal, setShowAddModal]   = useState(false);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [newName, setNewName]             = useState('');
   const [newClient, setNewClient]         = useState('');
   const [newMarket, setNewMarket]         = useState('');
@@ -756,6 +758,12 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem><Settings className="w-3.5 h-3.5 mr-2" />Settings</DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setVersionHistoryOpen(true)}
+                  data-testid="menu-version-history"
+                >
+                  <History className="w-3.5 h-3.5 mr-2" />Version History
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onLogout} className="text-red-500 focus:text-red-500">
                   <LogOut className="w-3.5 h-3.5 mr-2" />Sign out
@@ -1155,6 +1163,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
           <span>{portfolios.length} portfolio{portfolios.length !== 1 ? 's' : ''} &middot; &copy; {new Date().getFullYear()}</span>
         </div>
       </div>
+      <VersionHistoryModal open={versionHistoryOpen} onOpenChange={setVersionHistoryOpen} />
     </div>
     </TooltipProvider>
   );
