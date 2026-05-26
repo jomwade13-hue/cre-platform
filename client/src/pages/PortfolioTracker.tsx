@@ -5732,14 +5732,19 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
   const reportDate = new Date().toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   const filteredActive = leases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition');
-  // Group Project Management first, then everything else — within each group, sort by nearest lease expiration
-  const pmGroup = filteredActive
-    .filter(l => l.strategy === 'Project Management')
-    .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
+  // Active Initiatives (non-PM) — sorted by nearest lease expiration
   const otherGroup = filteredActive
     .filter(l => l.strategy !== 'Project Management')
     .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
-  const activeLeases = [...pmGroup, ...otherGroup];
+  // Project Management — sorted A-Z by tenant, then property
+  const pmGroup = filteredActive
+    .filter(l => l.strategy === 'Project Management')
+    .sort((a, b) => {
+      const t = a.tenant.localeCompare(b.tenant);
+      return t !== 0 ? t : a.property.localeCompare(b.property);
+    });
+  // Render order: Active Initiatives first, then Project Management
+  const activeLeases = [...otherGroup, ...pmGroup];
 
   // Decommission group: any lease with Strategy = Close, regardless of status. Mirrors the Decommission tab.
   const decomGroup = leases
@@ -5837,12 +5842,11 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
             </div>
 
             {/* KPI Summary */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '24px' }}>
               {[
-                { label: 'Active Locations', value: String(activeLeases.length) },
-                { label: 'Active SF',        value: fmtSqft(activeLeases.reduce((s,l) => s + l.sqft, 0)) },
-                { label: 'Decommissions',    value: String(decomGroup.length), color: decomColor },
-                { label: 'Decommission SF',  value: fmtSqft(decomGroup.reduce((s,l) => s + l.sqft, 0)), color: decomColor },
+                { label: 'Active Projects',    value: String(otherGroup.length),  color: accent },
+                { label: 'Project Management', value: String(pmGroup.length),     color: pmColor },
+                { label: 'Decommission',       value: String(decomGroup.length),  color: decomColor },
               ].map(kpi => (
                 <div key={kpi.label} style={{ background: cardBg, padding: '12px', borderRadius: '6px', border: `1px solid ${border}` }}>
                   <p style={{ fontSize: '10px', color: fgMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{kpi.label}</p>
@@ -5851,16 +5855,16 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
               ))}
             </div>
 
-            {/* Location Cards — grouped: Project Management first, then all others. Sorted by nearest lease expiration within each group. */}
+            {/* Location Cards — Active Initiatives first (by nearest lease expiration), then Project Management (A-Z). */}
             {activeLeases.map((lease, idx) => {
               const stages = STRATEGY_STAGES[lease.strategy] ?? [];
               const progress = calcProgress(stages, lease.stage);
               const lastNote = (notes[lease.id] ?? [])[0];
               const logo = clientLogos[lease.tenant];
-              const isFirstInGroup = idx === 0 || (idx === pmGroup.length && otherGroup.length > 0);
+              const isFirstInGroup = idx === 0 || (idx === otherGroup.length && pmGroup.length > 0);
               const groupTitle =
-                idx === 0 && pmGroup.length > 0 ? 'Project Management'
-                : idx === pmGroup.length && otherGroup.length > 0 ? 'Active Transactions'
+                idx === 0 && otherGroup.length > 0 ? 'Active Initiatives'
+                : idx === otherGroup.length && pmGroup.length > 0 ? 'Project Management'
                 : null;
               const groupCount = groupTitle === 'Project Management' ? pmGroup.length : otherGroup.length;
               const groupColor = groupTitle === 'Project Management' ? pmColor : accent;
