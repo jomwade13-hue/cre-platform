@@ -5739,6 +5739,11 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
     .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
   const activeLeases = [...pmGroup, ...otherGroup];
 
+  // Decommission group: any lease with Strategy = Close, regardless of status. Mirrors the Decommission tab.
+  const decomGroup = leases
+    .filter(l => l.strategy === 'Close')
+    .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
+
   const isDark = printMode === 'dark';
   const bg = isDark ? '#1a1a2e' : '#ffffff';
   const fg = isDark ? '#e0e0e0' : '#1a1a1a';
@@ -5750,17 +5755,22 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
   const pmColor = isDark ? '#A86FDF' : '#7A39BB';
   const pmCardBg = isDark ? '#2a1d3e' : '#F5EFFB';
   const pmBorder = isDark ? '#4A2E6E' : '#D9C3EF';
+  // Decommission unified color (red)
+  const decomColor = isDark ? '#F87171' : '#DC2626';
+  const decomCardBg = isDark ? '#3a1f1f' : '#FEF2F2';
+  const decomBorder = isDark ? '#7F1D1D' : '#FECACA';
   const isPmLease = (l: LeaseRecord) => l.strategy === 'Project Management';
-  const colorFor = (l: LeaseRecord) => isPmLease(l) ? pmColor : accent;
-  const cardBgFor = (l: LeaseRecord) => isPmLease(l) ? pmCardBg : cardBg;
-  const borderFor = (l: LeaseRecord) => isPmLease(l) ? pmBorder : border;
+  const isDecomLease = (l: LeaseRecord) => l.strategy === 'Close';
+  const colorFor = (l: LeaseRecord) => isPmLease(l) ? pmColor : isDecomLease(l) ? decomColor : accent;
+  const cardBgFor = (l: LeaseRecord) => isPmLease(l) ? pmCardBg : isDecomLease(l) ? decomCardBg : cardBg;
+  const borderFor = (l: LeaseRecord) => isPmLease(l) ? pmBorder : isDecomLease(l) ? decomBorder : border;
 
   const handlePrint = () => {
     const el = document.getElementById('print-report-content');
     if (!el) return;
     const w = window.open('', '_blank');
     if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><title>Active Initiatives Report</title>
+    w.document.write(`<!DOCTYPE html><html><head><title>Portfolio Activity Report</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: ${bg}; color: ${fg}; padding: 32px; }
@@ -5775,8 +5785,8 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
       <DialogContent className="max-w-5xl max-h-[95vh] p-0 overflow-hidden flex flex-col">
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
           <div>
-            <h2 className="text-sm font-bold">Print Report — Active Locations</h2>
-            <p className="text-xs text-muted-foreground">{activeLeases.length} active locations</p>
+            <h2 className="text-sm font-bold">Print Report — Portfolio Activity</h2>
+            <p className="text-xs text-muted-foreground">{activeLeases.length} active · {decomGroup.length} decommission</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex border border-border rounded-md overflow-hidden">
@@ -5810,7 +5820,7 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
                     </svg>
                     <span style={{ fontSize: '18px', fontWeight: 700 }}>Transcend</span>
                   </div>
-                  <p style={{ fontSize: '20px', fontWeight: 700, marginTop: '8px' }}>Active Initiatives Report</p>
+                  <p style={{ fontSize: '20px', fontWeight: 700, marginTop: '8px' }}>Portfolio Activity Report</p>
                   <p style={{ fontSize: '12px', color: fgMuted }}>Prepared for Jordan Wade</p>
                 </div>
                 <div style={{ textAlign: 'right' }}>
@@ -5824,13 +5834,13 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '24px' }}>
               {[
                 { label: 'Active Locations', value: String(activeLeases.length) },
-                { label: 'Total SF', value: fmtSqft(activeLeases.reduce((s,l) => s + l.sqft, 0)) },
-                { label: 'Annual Rent', value: fmt(activeLeases.reduce((s,l) => s + l.totalRent, 0)) },
-                { label: 'Construction', value: String(activeLeases.filter(l => l.stage.toLowerCase().includes('construction') || l.strategy === 'Project Management').length) },
+                { label: 'Active SF',        value: fmtSqft(activeLeases.reduce((s,l) => s + l.sqft, 0)) },
+                { label: 'Decommissions',    value: String(decomGroup.length), color: decomColor },
+                { label: 'Decommission SF',  value: fmtSqft(decomGroup.reduce((s,l) => s + l.sqft, 0)), color: decomColor },
               ].map(kpi => (
                 <div key={kpi.label} style={{ background: cardBg, padding: '12px', borderRadius: '6px', border: `1px solid ${border}` }}>
                   <p style={{ fontSize: '10px', color: fgMuted, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{kpi.label}</p>
-                  <p style={{ fontSize: '18px', fontWeight: 700, marginTop: '2px' }}>{kpi.value}</p>
+                  <p style={{ fontSize: '18px', fontWeight: 700, marginTop: '2px', color: kpi.color ?? fg }}>{kpi.value}</p>
                 </div>
               ))}
             </div>
@@ -5895,6 +5905,60 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
                 </React.Fragment>
               );
             })}
+
+            {/* Decommission Section — mirrors the Active groups, separately colored. */}
+            {decomGroup.length > 0 && (
+              <>
+                <div style={{ marginTop: '24px', marginBottom: '14px', paddingBottom: '8px', borderBottom: `2px solid ${decomColor}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ width: '4px', height: '18px', background: decomColor, borderRadius: '2px' }} />
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: fg, letterSpacing: '0.02em' }}>Decommission</span>
+                  <span style={{ fontSize: '10px', color: fgMuted, background: cardBg, padding: '2px 8px', borderRadius: '10px', border: `1px solid ${border}` }}>{decomGroup.length} {decomGroup.length === 1 ? 'location' : 'locations'}</span>
+                  <span style={{ fontSize: '10px', color: fgMuted, marginLeft: 'auto' }}>{fmtSqft(decomGroup.reduce((s,l) => s + l.sqft, 0))} total SF</span>
+                </div>
+                {decomGroup.map((lease, idx) => {
+                  const stages = STRATEGY_STAGES[lease.strategy] ?? [];
+                  const progress = calcProgress(stages, lease.stage);
+                  const lastNote = (notes[lease.id] ?? [])[0];
+                  const logo = clientLogos[lease.tenant];
+                  return (
+                    <div key={`decom-${lease.id}`} style={{ border: `1px solid ${decomBorder}`, borderLeft: `4px solid ${decomColor}`, borderRadius: '8px', padding: '16px', marginBottom: '12px', background: decomCardBg }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          {logo && <img src={logo} alt={lease.tenant} style={{ height: '24px', maxWidth: '100px', objectFit: 'contain' }} />}
+                          <div>
+                            <p style={{ fontSize: '14px', fontWeight: 700 }}>{idx + 1}. {lease.tenant} — {lease.property}</p>
+                            <p style={{ fontSize: '11px', color: fgMuted }}>{lease.address}</p>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <span style={{ fontSize: '10px', background: decomColor, color: 'white', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>{lease.status || 'Decommission'}</span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px', marginBottom: '10px', fontSize: '11px' }}>
+                        <div><span style={{ color: fgMuted }}>Strategy</span><br/><strong>{lease.strategy}</strong></div>
+                        <div><span style={{ color: fgMuted }}>Stage</span><br/><strong>{lease.stage || '—'}</strong></div>
+                        <div><span style={{ color: fgMuted }}>Progress</span><br/><strong>{progress}%</strong></div>
+                        <div><span style={{ color: fgMuted }}>SF</span><br/><strong>{lease.sqft.toLocaleString()}</strong></div>
+                        <div><span style={{ color: fgMuted }}>Lease Exp</span><br/><strong>{fmtDateShort(lease.leaseEnd)}</strong></div>
+                        <div><span style={{ color: fgMuted }}>Lead</span><br/><strong>{lease.clientLead}</strong></div>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div style={{ background: isDark ? '#3a2424' : '#FEE2E2', borderRadius: '4px', height: '6px', marginBottom: '8px' }}>
+                        <div style={{ background: decomColor, height: '100%', borderRadius: '4px', width: `${progress}%`, transition: 'width 0.3s' }} />
+                      </div>
+
+                      {lastNote && (
+                        <div style={{ background: isDark ? '#2a1818' : '#FEF2F2', borderRadius: '4px', padding: '8px 10px', fontSize: '11px' }}>
+                          <span style={{ color: fgMuted }}>{lastNote.author} · {lastNote.date}:</span> {lastNote.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
 
             {/* Footer */}
             <div style={{ borderTop: `1px solid ${border}`, paddingTop: '12px', marginTop: '16px', textAlign: 'center' }}>
