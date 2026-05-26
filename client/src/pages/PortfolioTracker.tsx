@@ -2405,8 +2405,8 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
         )}
       </div>
 
-      {/* Milestone Completion Tracker (hidden for PM / Decommission tabs per spec) */}
-      {!isPM && !isDecom && (() => {
+      {/* Milestone Completion Tracker (removed from all initiative tabs per spec) */}
+      {false && (() => {
         const todayStr = new Date().toISOString().slice(0, 10);
         const soonStr = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
         const allMs: (Milestone & { leaseId: number; tenant: string; property: string })[] = [];
