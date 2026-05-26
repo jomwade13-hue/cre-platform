@@ -5720,10 +5720,12 @@ function MassDeleteModal({ leases, onDelete, onClose }: {
 
 // ── Print Report Modal ────────────────────────────────────────────────────────
 
-function PrintReportModal({ leases, notes, clientLogos, onClose }: {
+function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboardLogo, onClose }: {
   leases: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   clientLogos: Record<string, string>;
+  portfolioName: string;
+  dashboardLogo: string;
   onClose: () => void;
 }) {
   const [printMode, setPrintMode] = useState<'light' | 'dark'>('light');
@@ -5812,13 +5814,17 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
-                    <svg viewBox="0 0 32 32" fill="none" width="28" height="28">
-                      <rect width="32" height="32" rx="6" fill={accent} />
-                      <rect x="7" y="18" width="4" height="8" fill="white" />
-                      <rect x="14" y="12" width="4" height="14" fill="white" opacity="0.85" />
-                      <rect x="21" y="6" width="4" height="20" fill="white" opacity="0.7" />
-                    </svg>
-                    <span style={{ fontSize: '18px', fontWeight: 700 }}>Transcend</span>
+                    {dashboardLogo ? (
+                      <img src={dashboardLogo} alt={portfolioName} style={{ height: '32px', maxWidth: '160px', objectFit: 'contain' }} />
+                    ) : (
+                      <svg viewBox="0 0 32 32" fill="none" width="28" height="28">
+                        <rect width="32" height="32" rx="6" fill={accent} />
+                        <rect x="7" y="18" width="4" height="8" fill="white" />
+                        <rect x="14" y="12" width="4" height="14" fill="white" opacity="0.85" />
+                        <rect x="21" y="6" width="4" height="20" fill="white" opacity="0.7" />
+                      </svg>
+                    )}
+                    <span style={{ fontSize: '18px', fontWeight: 700 }}>{portfolioName}</span>
                   </div>
                   <p style={{ fontSize: '20px', fontWeight: 700, marginTop: '8px' }}>Portfolio Activity Report</p>
                   <p style={{ fontSize: '12px', color: fgMuted }}>Prepared for Jordan Wade</p>
@@ -5897,8 +5903,8 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
                   </div>
 
                   {lastNote && (
-                    <div style={{ background: isPmLease(lease) ? (isDark ? '#25193a' : '#EFE6F8') : (isDark ? '#1e1e3f' : '#f3f4f6'), borderRadius: '4px', padding: '8px 10px', fontSize: '11px' }}>
-                      <span style={{ color: fgMuted }}>{lastNote.author} · {lastNote.date}:</span> {lastNote.text}
+                    <div style={{ background: isPmLease(lease) ? (isDark ? '#25193a' : '#EFE6F8') : (isDark ? '#1e1e3f' : '#f3f4f6'), borderRadius: '4px', padding: '10px 12px', fontSize: '13px', lineHeight: 1.5 }}>
+                      <span style={{ color: fgMuted, fontSize: '12px' }}>{lastNote.author} · {lastNote.date}:</span> {lastNote.text}
                     </div>
                   )}
                 </div>
@@ -5950,8 +5956,8 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
                       </div>
 
                       {lastNote && (
-                        <div style={{ background: isDark ? '#2a1818' : '#FEF2F2', borderRadius: '4px', padding: '8px 10px', fontSize: '11px' }}>
-                          <span style={{ color: fgMuted }}>{lastNote.author} · {lastNote.date}:</span> {lastNote.text}
+                        <div style={{ background: isDark ? '#2a1818' : '#FEF2F2', borderRadius: '4px', padding: '10px 12px', fontSize: '13px', lineHeight: 1.5 }}>
+                          <span style={{ color: fgMuted, fontSize: '12px' }}>{lastNote.author} · {lastNote.date}:</span> {lastNote.text}
                         </div>
                       )}
                     </div>
@@ -5962,7 +5968,7 @@ function PrintReportModal({ leases, notes, clientLogos, onClose }: {
 
             {/* Footer */}
             <div style={{ borderTop: `1px solid ${border}`, paddingTop: '12px', marginTop: '16px', textAlign: 'center' }}>
-              <p style={{ fontSize: '10px', color: fgMuted }}>Transcend — Confidential · {reportDate}</p>
+              <p style={{ fontSize: '10px', color: fgMuted }}>{portfolioName} — Confidential · {reportDate}</p>
             </div>
           </div>
         </div>
@@ -6222,6 +6228,8 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           leases={leasesData}
           notes={notes}
           clientLogos={clientLogos}
+          portfolioName={portfolioName}
+          dashboardLogo={dashboardLogo}
           onClose={() => setPrintReportOpen(false)}
         />
       )}
