@@ -64,7 +64,7 @@ const STRATEGY_STAGES: Record<string, string[]> = {
   'Sublease / Buyout':   ['—','1. Lease Review','2. Disposition Package','3. Marketing Package','4. Proposal/LOI','5. Negotiations','6. Approvals'],
   'Sale':                ['—','1. Property Review','2. Disposition Package','3. Marketing Package','4. Proposal/LOI','5. PSA Negotiations','6. Due Diligence','7. Closing Period'],
   'Purchase':            ['—','1. Property Review','2. Disposition Package','3. Marketing Package','4. Proposal/LOI','5. PSA Negotiations','6. Due Diligence','7. Closing Period'],
-  'Project Management':  ['—','1. Site Selection','2. Architect Procurement','3. Test Fit','4. Schematic Design','5. Design Development','6. Pricing & Permitting','7. Construction','8. Move'],
+  'Project Management':  ['—','1. Site Selection','2. Design Firm','3. Test Fits','4. Design','5. Pricing & Permitting','6. Construction','7. Move Coordination'],
 };
 
 const STATUS_STYLES: Record<string, string> = {
@@ -2192,28 +2192,34 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
 
 // ── Active Initiatives ────────────────────────────────────────────────────────
 
-function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareSnapshot, milestones, readOnly, mode = 'all' }: {
+function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareSnapshot, milestones, criticalItems, onSetCriticalItem, readOnly, mode = 'all' }: {
   allLeases: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   onUpdate: (updated: LeaseRecord) => void;
   onViewProfile: (id: number) => void;
   onShareSnapshot: () => void;
   milestones: Record<number, Milestone[]>;
+  criticalItems: Record<number, string>;
+  onSetCriticalItem: (leaseId: number, value: string) => void;
   readOnly?: boolean;
   /**
-   * 'all' → Active Initiatives tab (Active Initiative + Active Disposition statuses).
-   * 'pm'  → Project Management tab (any status, strategy === 'Project Management').
+   * 'all'   → Active Initiatives tab (Active Initiative + Active Disposition statuses).
+   * 'pm'    → Project Management tab (any status, strategy === 'Project Management').
+   * 'decom' → Decommission tab (any status, strategy === 'Close').
    */
-  mode?: 'all' | 'pm';
+  mode?: 'all' | 'pm' | 'decom';
 }) {
   const isPM = mode === 'pm';
+  const isDecom = mode === 'decom';
 
-  // Internal filter: PM mode shows all PM-strategy leases; otherwise active initiatives.
+  // Internal filter: PM mode shows all PM-strategy leases; decom shows Close-strategy leases; otherwise active initiatives.
   const activeLeases = useMemo(
     () => isPM
       ? allLeases.filter(l => l.strategy === 'Project Management')
+      : isDecom
+      ? allLeases.filter(l => l.strategy === 'Close')
       : allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition'),
-    [allLeases, isPM]
+    [allLeases, isPM, isDecom]
   );
 
   const [search, setSearch]               = useState('');
@@ -2233,22 +2239,32 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
 
   // Column visibility
   const AI_COLUMNS = [
-    { key: 'tenant',   label: 'Tenant' },
-    { key: 'address',  label: 'Address' },
-    { key: 'property', label: 'Property' },
-    { key: 'type',     label: 'Type' },
-    { key: 'status',   label: 'Status' },
-    { key: 'strategy', label: 'Strategy' },
-    { key: 'stage',    label: 'Stage' },
-    { key: 'progress', label: 'Progress' },
-    { key: 'leaseExp', label: 'Lease Exp' },
-    { key: 'urgency',  label: 'Urgency' },
-    { key: 'sf',       label: 'SF' },
-    { key: 'lead',     label: 'Lead' },
-    { key: 'lastNote', label: 'Last Note' },
+    { key: 'tenant',        label: 'Tenant' },
+    { key: 'address',       label: 'Address' },
+    { key: 'property',      label: 'Property' },
+    { key: 'type',          label: 'Type' },
+    { key: 'status',        label: 'Status' },
+    { key: 'strategy',      label: 'Strategy' },
+    { key: 'stage',         label: 'Stage' },
+    { key: 'progress',      label: 'Progress' },
+    { key: 'lcd',           label: 'LCD' },
+    { key: 'leaseExp',      label: 'Lease Exp' },
+    { key: 'urgency',       label: 'Urgency' },
+    { key: 'sf',            label: 'SF' },
+    { key: 'lead',          label: 'Lead' },
+    { key: 'pmContact',     label: 'PM Contact' },
+    { key: 'milestone',     label: 'Milestone' },
+    { key: 'criticalItems', label: 'Critical Items' },
+    { key: 'lastNote',      label: 'Last Note' },
   ] as const;
+  // Default visible-column set per mode:
+  //  - PM/Decom focus on the project workflow (Tenant, Property, Stage, Progress, LCD, SF, PM Contact, Milestone, Critical Items, Last Note).
+  //  - 'all' (Active Initiatives) keeps the legacy full column set.
+  const PM_DECOM_DEFAULT_COLS = ['tenant', 'property', 'stage', 'progress', 'lcd', 'sf', 'pmContact', 'milestone', 'criticalItems', 'lastNote'];
   const [aiVisibleCols, setAiVisibleCols] = useState<Set<string>>(
-    () => new Set(AI_COLUMNS.map(c => c.key))
+    () => (isPM || isDecom)
+      ? new Set(PM_DECOM_DEFAULT_COLS)
+      : new Set(AI_COLUMNS.filter(c => c.key !== 'lcd' && c.key !== 'pmContact' && c.key !== 'milestone' && c.key !== 'criticalItems').map(c => c.key))
   );
   const toggleAiCol = (key: string) => setAiVisibleCols(prev => {
     const next = new Set(prev);
@@ -2318,19 +2334,35 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
     return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-0 text-[10px]">24mo+</Badge>;
   };
 
-  // For Active Initiatives, the available statuses are these two; for PM, allow all statuses present.
+  // For Active Initiatives, the available statuses are these two; for PM/Decom, allow all statuses present.
   const activeStatuses   = isPM
     ? [...new Set(allLeases.filter(l => l.strategy === 'Project Management').map(l => l.status))].filter(Boolean).sort()
+    : isDecom
+    ? [...new Set(allLeases.filter(l => l.strategy === 'Close').map(l => l.status))].filter(Boolean).sort()
     : ['Active Initiative', 'Active Disposition'];
   const activeStrategies = [...new Set(allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition').map(l => l.strategy))].filter(Boolean).sort();
 
-  // PM banner / KPI tone
+  // PM / Decom / Active Initiatives banner + KPI tone
   const bannerCls   = isPM
     ? 'bg-purple-50 dark:bg-purple-950/30 border-purple-200 dark:border-purple-800/40'
+    : isDecom
+    ? 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800/40'
     : 'bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800/40';
-  const bannerIconCls = isPM ? 'text-purple-600 dark:text-purple-400' : 'text-green-600 dark:text-green-400';
-  const bannerTextCls = isPM ? 'text-purple-800 dark:text-purple-300' : 'text-green-800 dark:text-green-300';
-  const bannerSubCls  = isPM ? 'text-purple-600/80 dark:text-purple-400/60' : 'text-green-600/80 dark:text-green-400/60';
+  const bannerIconCls = isPM
+    ? 'text-purple-600 dark:text-purple-400'
+    : isDecom
+    ? 'text-red-600 dark:text-red-400'
+    : 'text-green-600 dark:text-green-400';
+  const bannerTextCls = isPM
+    ? 'text-purple-800 dark:text-purple-300'
+    : isDecom
+    ? 'text-red-800 dark:text-red-300'
+    : 'text-green-800 dark:text-green-300';
+  const bannerSubCls  = isPM
+    ? 'text-purple-600/80 dark:text-purple-400/60'
+    : isDecom
+    ? 'text-red-600/80 dark:text-red-400/60'
+    : 'text-green-600/80 dark:text-green-400/60';
 
   return (
     <div className="space-y-4">
@@ -2338,23 +2370,30 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
       <div className={cn('flex items-center gap-2 px-3 py-2 border rounded-lg', bannerCls)}>
         {isPM
           ? <HardHat className={cn('w-3.5 h-3.5 shrink-0', bannerIconCls)} />
+          : isDecom
+          ? <XCircle className={cn('w-3.5 h-3.5 shrink-0', bannerIconCls)} />
           : <Filter className={cn('w-3.5 h-3.5 shrink-0', bannerIconCls)} />}
         <span className={cn('text-xs font-medium', bannerTextCls)}>
           {isPM
             ? `Showing ${activeLeases.length} Project Management ${activeLeases.length === 1 ? 'facility' : 'facilities'}`
+            : isDecom
+            ? `Showing ${activeLeases.length} Decommission ${activeLeases.length === 1 ? 'facility' : 'facilities'}`
             : `Showing ${activeLeases.length} active initiative${activeLeases.length !== 1 ? 's' : ''}`}
         </span>
         <span className={cn('text-xs', bannerSubCls)}>— filtered from {allLeases.length} total leases</span>
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className={cn('grid gap-3', (isPM || isDecom) ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-2 lg:grid-cols-4')}>
         {isPM ? (
           <>
-            <KPICard label="PM Facilities" value={String(activeLeases.length)} icon={<HardHat className="w-4 h-4" />} accent="purple" />
-            <KPICard label="Total PM SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
-            <KPICard label="Avg Progress" value={`${avgProgress}%`} icon={<BarChart2 className="w-4 h-4" />} accent="amber" />
-            <KPICard label="Active" value={String(activeLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition').length)} icon={<Activity className="w-4 h-4" />} accent="green" />
+            <KPICard label="# of Projects" value={String(activeLeases.length)} icon={<HardHat className="w-4 h-4" />} accent="purple" />
+            <KPICard label="Project Management Aggregate SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
+          </>
+        ) : isDecom ? (
+          <>
+            <KPICard label="# of Decommissions" value={String(activeLeases.length)} icon={<XCircle className="w-4 h-4" />} accent="red" />
+            <KPICard label="Decommission Aggregate SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
           </>
         ) : (
           <>
@@ -2366,8 +2405,8 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
         )}
       </div>
 
-      {/* Milestone Completion Tracker */}
-      {(() => {
+      {/* Milestone Completion Tracker (hidden for PM / Decommission tabs per spec) */}
+      {!isPM && !isDecom && (() => {
         const todayStr = new Date().toISOString().slice(0, 10);
         const soonStr = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
         const allMs: (Milestone & { leaseId: number; tenant: string; property: string })[] = [];
@@ -2456,8 +2495,8 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
           className="flex-1 min-w-[180px]"
           value={search}
           onChange={setSearch}
-          placeholder={isPM ? 'Search PM tenant, property, address, stage…' : 'Search tenant, property, address, strategy, stage…'}
-          testIdPrefix={isPM ? 'search-pm' : 'search-initiatives'}
+          placeholder={isPM ? 'Search PM tenant, property, address, stage…' : isDecom ? 'Search decommission tenant, property, address, stage…' : 'Search tenant, property, address, strategy, stage…'}
+          testIdPrefix={isPM ? 'search-pm' : isDecom ? 'search-decom' : 'search-initiatives'}
           items={activeLeases.map<SuggestionItem>(l => ({
             id: l.id,
             primary: l.tenant,
@@ -2565,7 +2604,7 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
       {filtered.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
           <Activity className="w-10 h-10 mx-auto mb-2 opacity-30" />
-          <p className="text-sm">{isPM ? 'No Project Management facilities match your filters.' : 'No active initiatives match your filters.'}</p>
+          <p className="text-sm">{isPM ? 'No Project Management facilities match your filters.' : isDecom ? 'No Decommission facilities match your filters.' : 'No active initiatives match your filters.'}</p>
         </div>
       )}
 
@@ -2585,11 +2624,15 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                   {isAiColVisible('strategy') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Strategy</th>}
                   {isAiColVisible('stage')    && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Stage</th>}
                   {isAiColVisible('progress') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Progress</th>}
+                  {isAiColVisible('lcd')      && <th className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-foreground whitespace-nowrap" onClick={() => toggleSort('leaseStart')} title="Lease Commencement Date"><span className="flex items-center gap-1">LCD <SortIcon col="leaseStart" /></span></th>}
                   {isAiColVisible('leaseExp') && <th className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-foreground whitespace-nowrap" onClick={() => toggleSort('leaseEnd')}><span className="flex items-center gap-1">Lease Exp <SortIcon col="leaseEnd" /></span></th>}
                   {isAiColVisible('urgency')  && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Urgency</th>}
                   {isAiColVisible('sf')       && <th className="px-3 py-2.5 text-left font-semibold cursor-pointer hover:text-foreground whitespace-nowrap" onClick={() => toggleSort('sqft')}><span className="flex items-center gap-1">SF <SortIcon col="sqft" /></span></th>}
                   {isAiColVisible('lead')     && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Lead</th>}
-                  {isAiColVisible('lastNote') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Last Note</th>}
+                  {isAiColVisible('pmContact')     && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">PM Contact</th>}
+                  {isAiColVisible('milestone')     && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Milestone</th>}
+                  {isAiColVisible('criticalItems') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Critical Items</th>}
+                  {isAiColVisible('lastNote')      && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Last Note</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -2597,6 +2640,13 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                   const stages   = STRATEGY_STAGES[lease.strategy] ?? [];
                   const progress = calcProgress(stages, lease.stage);
                   const lastNote = (notes[lease.id] ?? [])[0];
+                  // Next upcoming milestone (smallest future date among non-completed milestones).
+                  const todayIso = new Date().toISOString().slice(0, 10);
+                  const leaseMs = (milestones[lease.id] ?? []).filter(m => m.completed !== true);
+                  const upcomingMs = leaseMs
+                    .filter(m => m.date >= todayIso)
+                    .sort((a, b) => a.date < b.date ? -1 : 1)[0]
+                    ?? leaseMs.sort((a, b) => a.date < b.date ? -1 : 1)[0];
                   return (
                     <tr key={lease.id} className="hover:bg-muted/30 transition-colors group">
                       <td className="px-3 py-2.5">
@@ -2623,10 +2673,31 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                           <span className="text-[10px] text-muted-foreground w-8 text-right tabular-nums">{progress}%</span>
                         </div>
                       </td>}
+                      {isAiColVisible('lcd')      && <td className="px-3 py-2.5 text-xs font-medium whitespace-nowrap tabular-nums">{lease.leaseStart ? fmtDateShort(lease.leaseStart) : <span className="text-muted-foreground italic">—</span>}</td>}
                       {isAiColVisible('leaseExp') && <td className="px-3 py-2.5 text-xs font-medium whitespace-nowrap tabular-nums">{fmtDateShort(lease.leaseEnd)}</td>}
                       {isAiColVisible('urgency')  && <td className="px-3 py-2.5">{getUrgencyBadge(lease.leaseEnd)}</td>}
                       {isAiColVisible('sf')       && <td className="px-3 py-2.5 text-xs tabular-nums">{lease.sqft.toLocaleString()}</td>}
                       {isAiColVisible('lead')     && <td className="px-1 py-1.5 min-w-[140px]"><SelectCell value={lease.clientLead} options={CLIENT_LEADS} onChange={v => handleFieldUpdate(lease, 'clientLead', v)} disabled={readOnly} /></td>}
+                      {isAiColVisible('pmContact') && <td className="px-1 py-1.5 min-w-[140px]"><SelectCell value={lease.clientLead} options={CLIENT_LEADS} onChange={v => handleFieldUpdate(lease, 'clientLead', v)} disabled={readOnly} /></td>}
+                      {isAiColVisible('milestone') && <td className="px-3 py-2.5 text-xs min-w-[180px]">
+                        {upcomingMs ? (
+                          <div className="space-y-0.5">
+                            <p className="font-medium leading-snug whitespace-normal break-words">{upcomingMs.label}</p>
+                            <p className="text-[10px] text-muted-foreground tabular-nums">{fmtDateShort(upcomingMs.date)}</p>
+                          </div>
+                        ) : <span className="text-muted-foreground italic">—</span>}
+                      </td>}
+                      {isAiColVisible('criticalItems') && <td className="px-2 py-1.5 min-w-[220px]">
+                        <textarea
+                          value={criticalItems[lease.id] ?? ''}
+                          onChange={e => onSetCriticalItem(lease.id, e.target.value)}
+                          placeholder={readOnly ? '—' : 'Add critical items…'}
+                          disabled={readOnly}
+                          rows={2}
+                          className="w-full text-xs bg-transparent border border-transparent hover:border-border focus:border-primary focus:outline-none rounded-md px-2 py-1.5 resize-y min-h-[44px] leading-snug placeholder:text-muted-foreground/60 disabled:opacity-60 disabled:cursor-not-allowed"
+                          data-testid={`input-critical-items-${lease.id}`}
+                        />
+                      </td>}
                       {isAiColVisible('lastNote') && <td className="px-3 py-2.5 min-w-[260px]">
                         {lastNote ? (
                           <div className="space-y-0.5">
@@ -2642,7 +2713,7 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
             </table>
           </div>
           <div className="px-4 py-2 border-t border-border bg-muted/30 flex items-center justify-between text-xs text-muted-foreground">
-            <span>{filtered.length} of {activeLeases.length} active initiatives</span>
+            <span>{filtered.length} of {activeLeases.length} {isPM ? 'PM facilities' : isDecom ? 'decommission facilities' : 'active initiatives'}</span>
             <span>Total: {fmtSqft(filtered.reduce((s,l) => s + l.sqft, 0))}</span>
           </div>
         </div>
@@ -5880,6 +5951,19 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [mappingTemplates, setMappingTemplates] = useState<MappingTemplate[]>([]);
   const { globalLogo: dashboardLogo, setGlobalLogo: setDashboardLogo } = useBranding();
   const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
+  // Editable Critical Items notes per lease (PM + Decommission tabs). Plain text keyed by lease id.
+  const [criticalItems, setCriticalItems] = usePersistedState<Record<number, string>>('cre_critical_items', {});
+  const setCriticalItem = (leaseId: number, value: string) =>
+    setCriticalItems(prev => {
+      // Drop the entry entirely when the user clears it, so empty cells don't pile up forever.
+      if (!value || !value.trim()) {
+        if (!(leaseId in prev)) return prev;
+        const next = { ...prev };
+        delete next[leaseId];
+        return next;
+      }
+      return { ...prev, [leaseId]: value };
+    });
 
   const addMilestone = (leaseId: number, label: string, date: string, completed?: boolean) => {
     setMilestones(prev => {
@@ -5908,6 +5992,8 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const profileLease = leasesData.find(l => l.id === profileId) ?? null;
   const pmLeases     = leasesData.filter(l => l.strategy === 'Project Management');
   const pmCount      = pmLeases.length;
+  const decomLeases  = leasesData.filter(l => l.strategy === 'Close');
+  const decomCount   = decomLeases.length;
   const activeInit   = leasesData.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition');
 
   const handleTabChange = (value: string) => {
@@ -6189,13 +6275,16 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
 
       {/* Module Tabs */}
       <Tabs value={tab} onValueChange={handleTabChange}>
-        <TabsList className="h-9">
+        <TabsList className="h-9 flex-wrap">
           <TabsTrigger value="leases"      className="text-xs gap-1.5"><Database      className="w-3.5 h-3.5" />Property Database</TabsTrigger>
           <TabsTrigger value="initiatives" className={cn('text-xs gap-1.5', activeInit.length > 0 && 'ring-1 ring-green-400/50 dark:ring-green-500/40')}><Activity className="w-3.5 h-3.5" />Active Initiatives
             {activeInit.length > 0 && <span className="ml-1.5 bg-green-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none font-semibold">{activeInit.length}</span>}
           </TabsTrigger>
           <TabsTrigger value="pm"          className={cn('text-xs gap-1.5', pmCount > 0 && 'ring-1 ring-purple-400/50 dark:ring-purple-500/40')}><HardHat className="w-3.5 h-3.5" />Project Management
             {pmCount > 0 && <span className="ml-1.5 bg-purple-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none font-semibold">{pmCount}</span>}
+          </TabsTrigger>
+          <TabsTrigger value="decom"       className={cn('text-xs gap-1.5', decomCount > 0 && 'ring-1 ring-red-400/50 dark:ring-red-500/40')}><XCircle className="w-3.5 h-3.5" />Decommission
+            {decomCount > 0 && <span className="ml-1.5 bg-red-500 text-white rounded-full text-[10px] px-1.5 py-0.5 leading-none font-semibold">{decomCount}</span>}
           </TabsTrigger>
           <TabsTrigger value="roadmap"     className="text-xs gap-1.5"><CalendarRange className="w-3.5 h-3.5" />Roadmap</TabsTrigger>
           <TabsTrigger value="qbr"         className="text-xs gap-1.5"><FileBarChart  className="w-3.5 h-3.5" />QBR Report</TabsTrigger>
@@ -6206,11 +6295,15 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
 
         <TabsContent value="initiatives" className="mt-4">
-          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} readOnly={readOnly} mode="all" />
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="all" />
         </TabsContent>
 
         <TabsContent value="pm" className="mt-4">
-          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} readOnly={readOnly} mode="pm" />
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="pm" />
+        </TabsContent>
+
+        <TabsContent value="decom" className="mt-4">
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" />
         </TabsContent>
 
         <TabsContent value="roadmap" className="mt-4">
