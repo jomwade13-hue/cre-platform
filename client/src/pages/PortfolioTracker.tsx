@@ -6386,10 +6386,21 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         <TabsContent value="decom" className="mt-4">
           <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" />
           <DecommissionChecklistModule
-            closedLeases={decomLeases.map(l => ({ id: l.id, tenant: l.tenant, property: l.property }))}
+            closedLeases={decomLeases.map(l => ({
+              id: l.id,
+              tenant: l.tenant,
+              property: l.property,
+              address: (l as any).address,
+              sqft: l.sqft,
+              leaseEnd: l.leaseEnd,
+              status: l.status,
+              clientLead: (l as any).clientLead,
+            }))}
             decomData={decomData}
             onSetDecomData={updateDecomData}
             readOnly={readOnly}
+            portfolioName={portfolioName}
+            dashboardLogo={dashboardLogo}
           />
         </TabsContent>
 
