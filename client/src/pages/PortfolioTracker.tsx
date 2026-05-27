@@ -6032,6 +6032,8 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [decomData, setDecomData] = usePersistedState<Record<number, DecomData>>('cre_decom_data', {});
   const updateDecomData = (leaseId: number, next: DecomData) =>
     setDecomData(prev => ({ ...prev, [leaseId]: next }));
+  // Whether to show the Decommission top chart (InitiativesModule). Default collapsed per user request.
+  const [showDecomTable, setShowDecomTable] = useState<boolean>(false);
   const setCriticalItem = (leaseId: number, value: string) =>
     setCriticalItems(prev => {
       // Drop the entry entirely when the user clears it, so empty cells don't pile up forever.
@@ -6384,7 +6386,31 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
 
         <TabsContent value="decom" className="mt-4">
-          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" />
+          <div className="mb-3 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setShowDecomTable(v => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30"
+              data-testid="button-toggle-decom-table"
+            >
+              {showDecomTable ? (
+                <>
+                  <ChevronUp className="h-3.5 w-3.5" />
+                  Hide Decommission Table
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                  Show Decommission Table
+                </>
+              )}
+            </button>
+          </div>
+          {showDecomTable && (
+            <div className="mb-4">
+              <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" />
+            </div>
+          )}
           <DecommissionChecklistModule
             closedLeases={decomLeases.map(l => ({
               id: l.id,
@@ -6401,6 +6427,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
             readOnly={readOnly}
             portfolioName={portfolioName}
             dashboardLogo={dashboardLogo}
+            onViewProfile={setProfileId}
           />
         </TabsContent>
 

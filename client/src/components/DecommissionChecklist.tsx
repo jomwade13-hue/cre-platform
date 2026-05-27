@@ -23,8 +23,11 @@ export interface DecomTask {
 
 export interface DecomData {
   checklist: DecomTask[];
-  surrender: string;    // free-form note
-  services: string[];   // bullet list
+  surrender: string;          // free-form note
+  services: string[];         // bullet list
+  leaseExpiration?: string;   // ISO YYYY-MM-DD — manual override per decom workflow
+  landlordBroker?: string;    // manual entry
+  propertyManager?: string;   // manual entry
 }
 
 export interface ClosedLeaseInfo {
@@ -54,6 +57,9 @@ export const newDecomData = (): DecomData => ({
   checklist: DEFAULT_TASKS.map((t, i) => ({ ...t, id: `t-${Date.now()}-${i}` })),
   surrender: '',
   services: [],
+  leaseExpiration: '',
+  landlordBroker: '',
+  propertyManager: '',
 });
 
 /* ───────────────────── Helpers ───────────────────── */
@@ -90,12 +96,13 @@ function progressSummary(data: DecomData) {
 /* ───────────────────── Single-lease panel ───────────────────── */
 
 function LeasePanel({
-  lease, data, onChange, readOnly,
+  lease, data, onChange, readOnly, onViewProfile,
 }: {
   lease: ClosedLeaseInfo;
   data: DecomData;
   onChange: (next: DecomData) => void;
   readOnly?: boolean;
+  onViewProfile?: (leaseId: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [newService, setNewService] = useState('');
@@ -150,8 +157,22 @@ function LeasePanel({
         <div className="flex-1 min-w-0">
           {/* Title row */}
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-bold text-foreground">{lease.tenant}</span>
-            <span className="text-xs text-muted-foreground">— {lease.property}</span>
+            {onViewProfile ? (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onViewProfile(lease.id); }}
+                className="text-sm font-bold text-foreground hover:text-red-600 dark:hover:text-red-400 hover:underline transition-colors"
+                title="Open building profile"
+                data-testid={`decom-card-title-${lease.id}`}
+              >
+                {lease.tenant} — {lease.property}
+              </button>
+            ) : (
+              <>
+                <span className="text-sm font-bold text-foreground">{lease.tenant}</span>
+                <span className="text-xs text-muted-foreground">— {lease.property}</span>
+              </>
+            )}
             <Badge variant="outline" className="border-red-300 text-red-700 dark:border-red-800 dark:text-red-300 text-[10px] ml-auto">
               {lease.status || 'Decommission'}
             </Badge>
@@ -196,6 +217,54 @@ function LeasePanel({
       {/* ── Expanded body ─────── */}
       {open && (
         <CardContent className="space-y-6 border-t pt-4">
+          {/* Key Contacts & Dates */}
+          <section>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">
+                  Lease Expiration Date
+                </label>
+                <Input
+                  type="date"
+                  value={data.leaseExpiration || ''}
+                  onChange={e => onChange({ ...data, leaseExpiration: e.target.value })}
+                  disabled={readOnly}
+                  className="h-8 text-xs"
+                  data-testid={`decom-leaseexp-${lease.id}`}
+                />
+                {data.leaseExpiration && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">{fmtDate(data.leaseExpiration)}</p>
+                )}
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">
+                  Landlord Broker
+                </label>
+                <Input
+                  value={data.landlordBroker || ''}
+                  onChange={e => onChange({ ...data, landlordBroker: e.target.value })}
+                  placeholder="Name / firm…"
+                  disabled={readOnly}
+                  className="h-8 text-xs"
+                  data-testid={`decom-broker-${lease.id}`}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground block mb-1">
+                  Property Manager
+                </label>
+                <Input
+                  value={data.propertyManager || ''}
+                  onChange={e => onChange({ ...data, propertyManager: e.target.value })}
+                  placeholder="Name / firm…"
+                  disabled={readOnly}
+                  className="h-8 text-xs"
+                  data-testid={`decom-pm-${lease.id}`}
+                />
+              </div>
+            </div>
+          </section>
+
           {/* Checklist */}
           <section>
             <div className="flex items-center justify-between mb-2">
@@ -489,12 +558,27 @@ function PrintChecklistsModal({
                 <div className="border-l-4 border-red-600 pl-3 mb-4">
                   <div className="text-[15px] font-bold">{lease.tenant} — {lease.property}</div>
                   <div className="text-[11px] text-gray-600">
-                    {[lease.address, lease.leaseEnd ? `LCD: ${fmtDate(lease.leaseEnd)}` : '', fmtSqft(lease.sqft), lease.clientLead ? `PM: ${lease.clientLead}` : '']
-                      .filter(Boolean).join(' · ')}
+                    {[lease.address, fmtSqft(lease.sqft)].filter(Boolean).join(' · ')}
                   </div>
                   <div className="text-[11px] mt-1">
                     <span className="font-semibold text-green-700">{done} / {total} complete</span>
                     {atRisk > 0 && <span className="font-semibold text-red-700 ml-3">{atRisk} At Risk</span>}
+                  </div>
+                </div>
+
+                {/* Key Contacts & Dates */}
+                <div className="mb-4 grid grid-cols-3 gap-3 text-[11px]">
+                  <div>
+                    <div className="font-bold uppercase tracking-wide text-gray-600 text-[9px]">Lease Expiration</div>
+                    <div>{data.leaseExpiration ? fmtDate(data.leaseExpiration) : (lease.leaseEnd ? fmtDate(lease.leaseEnd) : <span className="italic text-gray-400">—</span>)}</div>
+                  </div>
+                  <div>
+                    <div className="font-bold uppercase tracking-wide text-gray-600 text-[9px]">Landlord Broker</div>
+                    <div>{data.landlordBroker || <span className="italic text-gray-400">—</span>}</div>
+                  </div>
+                  <div>
+                    <div className="font-bold uppercase tracking-wide text-gray-600 text-[9px]">Property Manager</div>
+                    <div>{data.propertyManager || lease.clientLead || <span className="italic text-gray-400">—</span>}</div>
                   </div>
                 </div>
 
@@ -593,7 +677,7 @@ function PrintChecklistsModal({
 
 export function DecommissionChecklistModule({
   closedLeases, decomData, onSetDecomData, readOnly,
-  portfolioName, dashboardLogo,
+  portfolioName, dashboardLogo, onViewProfile,
 }: {
   closedLeases: ClosedLeaseInfo[];
   decomData: Record<number, DecomData>;
@@ -601,6 +685,7 @@ export function DecommissionChecklistModule({
   readOnly?: boolean;
   portfolioName: string;
   dashboardLogo?: string;
+  onViewProfile?: (leaseId: number) => void;
 }) {
   const [printOpen, setPrintOpen] = useState(false);
   const [expandAll, setExpandAll] = useState<null | 'open' | 'closed'>(null);
@@ -637,6 +722,7 @@ export function DecommissionChecklistModule({
           data={decomData[l.id] ?? newDecomData()}
           onChange={next => onSetDecomData(l.id, next)}
           readOnly={readOnly}
+          onViewProfile={onViewProfile}
         />
       ))}
 
