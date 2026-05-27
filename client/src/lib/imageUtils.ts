@@ -106,3 +106,71 @@ export function dataUrlByteSize(dataUrl: string): number {
   const b64 = dataUrl.slice(i + 1);
   return Math.floor(b64.length * 0.75);
 }
+
+/**
+ * Recompress an already-encoded data URL (e.g. legacy 2 MB photo stored before
+ * upload-time compression existed). Returns a smaller data URL, or the original
+ * unchanged if compression didn't help or anything went wrong.
+ */
+export async function compressDataUrl(
+  dataUrl: string,
+  opts: CompressOptions = {},
+): Promise<string> {
+  if (!dataUrl || !dataUrl.startsWith('data:image/')) return dataUrl;
+  const {
+    maxDimension = 1280,
+    quality = 0.8,
+    mimeType = 'image/jpeg',
+    targetMaxBytes,
+    minQuality = 0.4,
+    minDimension = 480,
+  } = opts;
+
+  return new Promise<string>((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const { width: w0, height: h0 } = img;
+        const encodeAt = (dim: number, q: number): string | null => {
+          const longest = Math.max(w0, h0);
+          const scale = longest > dim ? dim / longest : 1;
+          const w = Math.max(1, Math.round(w0 * scale));
+          const h = Math.max(1, Math.round(h0 * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return null;
+          ctx.drawImage(img, 0, 0, w, h);
+          return canvas.toDataURL(mimeType, q);
+        };
+
+        let dim = maxDimension;
+        let q = quality;
+        let best = encodeAt(dim, q);
+        if (!best) { resolve(dataUrl); return; }
+
+        if (targetMaxBytes) {
+          while (dataUrlByteSize(best) > targetMaxBytes && q > minQuality) {
+            q = Math.max(minQuality, q - 0.1);
+            const next = encodeAt(dim, q);
+            if (!next) break;
+            best = next;
+          }
+          while (dataUrlByteSize(best) > targetMaxBytes && dim > minDimension) {
+            dim = Math.max(minDimension, Math.round(dim * 0.8));
+            const next = encodeAt(dim, q);
+            if (!next) break;
+            best = next;
+          }
+        }
+
+        resolve(best.length < dataUrl.length ? best : dataUrl);
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}

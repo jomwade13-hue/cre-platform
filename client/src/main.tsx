@@ -3,6 +3,7 @@ import App from "./App";
 import "./index.css";
 import 'leaflet/dist/leaflet.css';
 import { startAutoSnapshot, startAutoDownload, migrateSnapshotsStripBlobs } from './lib/snapshots';
+import { runLegacyImageCompressionOnce } from './lib/legacyImageMigration';
 
 if (!window.location.hash) {
   window.location.hash = "#/";
@@ -47,6 +48,23 @@ try {
     if (r.trimmedCount > 0) {
       // eslint-disable-next-line no-console
       console.info(`[snapshots] Reclaimed ${(r.bytesFreed / 1024 / 1024).toFixed(1)} MB from ${r.trimmedCount} legacy snapshot(s).`);
+    }
+  }).catch(() => { /* best-effort */ });
+} catch { /* best-effort */ }
+
+// One-time migration: recompress legacy photos/logos that were uploaded
+// before upload-time compression existed. Each `cre_client_logos` /
+// `cre_lease_photos` write rewrites the whole record in a single IDB
+// transaction, so a few full-resolution legacy images can fail the write
+// even at <1% overall quota usage. This shrinks each oversized entry in
+// place and only runs once per browser.
+try {
+  runLegacyImageCompressionOnce().then(r => {
+    if (r && (r.logosCompressed > 0 || r.photosCompressed > 0)) {
+      // eslint-disable-next-line no-console
+      console.info(
+        `[legacy-images] Recompressed ${r.logosCompressed} logo(s) and ${r.photosCompressed} photo(s); freed ${(r.bytesFreed / 1024 / 1024).toFixed(1)} MB.`,
+      );
     }
   }).catch(() => { /* best-effort */ });
 } catch { /* best-effort */ }
