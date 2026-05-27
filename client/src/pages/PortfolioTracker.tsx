@@ -10,6 +10,7 @@ import {
   Printer, Upload, Sun, Moon, ImageIcon, Share2, Link2, Copy, Check, TrendingUp, ShieldCheck, PieChart, ExternalLink,
   FileUp, Table2, AlertTriangle, CheckCircle, XCircle, Grid3X3, ArrowRight, Save, FolderOpen, SlidersHorizontal, Eye, EyeOff
 } from 'lucide-react';
+import { DecommissionChecklistModule, newDecomData, type DecomData } from '@/components/DecommissionChecklist';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6027,6 +6028,10 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
   // Editable Critical Items notes per lease (PM + Decommission tabs). Plain text keyed by lease id.
   const [criticalItems, setCriticalItems] = usePersistedState<Record<number, string>>('cre_critical_items', {});
+  // Real Estate Decommission Check List + Surrender Requirements + Services to Terminate, keyed by lease id.
+  const [decomData, setDecomData] = usePersistedState<Record<number, DecomData>>('cre_decom_data', {});
+  const updateDecomData = (leaseId: number, next: DecomData) =>
+    setDecomData(prev => ({ ...prev, [leaseId]: next }));
   const setCriticalItem = (leaseId: number, value: string) =>
     setCriticalItems(prev => {
       // Drop the entry entirely when the user clears it, so empty cells don't pile up forever.
@@ -6380,6 +6385,12 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
 
         <TabsContent value="decom" className="mt-4">
           <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" />
+          <DecommissionChecklistModule
+            closedLeases={decomLeases.map(l => ({ id: l.id, tenant: l.tenant, property: l.property }))}
+            decomData={decomData}
+            onSetDecomData={updateDecomData}
+            readOnly={readOnly}
+          />
         </TabsContent>
 
         <TabsContent value="roadmap" className="mt-4">
