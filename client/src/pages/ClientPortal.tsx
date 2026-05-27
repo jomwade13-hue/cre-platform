@@ -613,7 +613,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
 
   const handlePortfolioLogoUpload = async (id: number, file: File) => {
     if (!file.type.startsWith('image/')) return;
-    const dataUrl = await compressImageFile(file, { maxDimension: 480, quality: 0.9 });
+    const dataUrl = await compressImageFile(file, { maxDimension: 320, quality: 0.85, targetMaxBytes: 40 * 1024, minQuality: 0.6, minDimension: 200 });
     setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: dataUrl } : p));
   };
 
@@ -696,7 +696,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
 
   const handleLogoUpload = async (file: File) => {
     if (!file.type.startsWith('image/')) return;
-    const dataUrl = await compressImageFile(file, { maxDimension: 480, quality: 0.9 });
+    const dataUrl = await compressImageFile(file, { maxDimension: 320, quality: 0.85, targetMaxBytes: 40 * 1024, minQuality: 0.6, minDimension: 200 });
     setLogo(dataUrl);
   };
 
@@ -1068,7 +1068,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                       onChange={async e => {
                         const f = e.target.files?.[0];
                         if (!f || !f.type.startsWith('image/')) return;
-                        const dataUrl = await compressImageFile(f, { maxDimension: 480, quality: 0.9 });
+                        const dataUrl = await compressImageFile(f, { maxDimension: 320, quality: 0.85, targetMaxBytes: 40 * 1024, minQuality: 0.6, minDimension: 200 });
                         setNewLogo(dataUrl);
                       }}
                     />

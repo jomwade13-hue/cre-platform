@@ -1,29 +1,42 @@
 /**
- * Image utilities for client-side compression before persisting to localStorage.
+ * Image utilities for client-side compression before persisting to IndexedDB.
  *
- * localStorage has a ~5 MB quota per origin. A single full-resolution photo
- * (4–10 MB as a JPEG, 15+ MB as a base64 data URL) blows that quota. We
- * downscale and re-encode every uploaded image so we can store many of them.
+ * IndexedDB has practical caps (tens-to-hundreds of MB depending on browser
+ * + storage pressure). A single full-resolution photo can be 4-15 MB as a
+ * base64 data URL. We downscale and re-encode every uploaded image, and
+ * (optionally) iteratively reduce quality/dimension until the encoded byte
+ * size lands under a target — keeping uploads small enough to persist many
+ * of them without hitting quota.
  */
 
 export interface CompressOptions {
-  maxDimension?: number; // longest edge in px (default 1600)
-  quality?: number;      // JPEG quality 0..1 (default 0.82)
-  mimeType?: string;     // output mime (default 'image/jpeg')
+  maxDimension?: number;     // longest edge in px (default 1280)
+  quality?: number;          // initial JPEG quality 0..1 (default 0.8)
+  mimeType?: string;         // output mime (default 'image/jpeg')
+  targetMaxBytes?: number;   // if set, iteratively shrink until under this size
+  minQuality?: number;       // lower-bound quality during iteration (default 0.4)
+  minDimension?: number;     // lower-bound longest edge during iteration (default 480)
 }
 
 /**
  * Reads a File, decodes it, downscales (if larger than `maxDimension` on
  * the longest edge), and returns a base64 data URL of the compressed JPEG.
  *
+ * If `targetMaxBytes` is provided, repeatedly re-encodes with lower quality
+ * and (if still too big) smaller dimensions until the output is under target,
+ * or until the floor settings are hit.
+ *
  * Falls back to the original FileReader result if anything goes wrong.
  */
 export async function compressImageFile(file: File, opts: CompressOptions = {}): Promise<string> {
-  const { maxDimension = 1600, quality = 0.82, mimeType = 'image/jpeg' } = opts;
-
-  // PNG with transparency? Keep PNG to preserve alpha (logos etc.).
-  const wantPng = (file.type === 'image/png' && mimeType === 'image/jpeg') ? false : false;
-  const outputMime = wantPng ? 'image/png' : mimeType;
+  const {
+    maxDimension = 1280,
+    quality = 0.8,
+    mimeType = 'image/jpeg',
+    targetMaxBytes,
+    minQuality = 0.4,
+    minDimension = 480,
+  } = opts;
 
   return new Promise<string>((resolve) => {
     const reader = new FileReader();
@@ -33,19 +46,44 @@ export async function compressImageFile(file: File, opts: CompressOptions = {}):
       img.onload = () => {
         try {
           const { width: w0, height: h0 } = img;
-          const longest = Math.max(w0, h0);
-          const scale = longest > maxDimension ? maxDimension / longest : 1;
-          const w = Math.round(w0 * scale);
-          const h = Math.round(h0 * scale);
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) { resolve(original); return; }
-          ctx.drawImage(img, 0, 0, w, h);
-          const compressed = canvas.toDataURL(outputMime, quality);
-          // Only use compressed version if it's actually smaller
-          resolve(compressed.length < original.length ? compressed : original);
+
+          const encodeAt = (dim: number, q: number): string | null => {
+            const longest = Math.max(w0, h0);
+            const scale = longest > dim ? dim / longest : 1;
+            const w = Math.max(1, Math.round(w0 * scale));
+            const h = Math.max(1, Math.round(h0 * scale));
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+            ctx.drawImage(img, 0, 0, w, h);
+            return canvas.toDataURL(mimeType, q);
+          };
+
+          let dim = maxDimension;
+          let q = quality;
+          let best = encodeAt(dim, q);
+          if (!best) { resolve(original); return; }
+
+          if (targetMaxBytes) {
+            // Iteratively reduce quality first, then dimension, until under target.
+            while (dataUrlByteSize(best) > targetMaxBytes && q > minQuality) {
+              q = Math.max(minQuality, q - 0.1);
+              const next = encodeAt(dim, q);
+              if (!next) break;
+              best = next;
+            }
+            while (dataUrlByteSize(best) > targetMaxBytes && dim > minDimension) {
+              dim = Math.max(minDimension, Math.round(dim * 0.8));
+              const next = encodeAt(dim, q);
+              if (!next) break;
+              best = next;
+            }
+          }
+
+          // Only return the compressed version if it's actually smaller.
+          resolve(best.length < original.length ? best : original);
         } catch {
           resolve(original);
         }

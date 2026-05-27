@@ -6,6 +6,7 @@ import { ThemeProvider, AppLayout } from '@/components/Layout';
 import PortfolioTracker from '@/pages/PortfolioTracker';
 import LoginPage from '@/pages/LoginPage';
 import ClientPortal, { type PortfolioRole } from '@/pages/ClientPortal';
+import { StorageRecoveryDialog } from '@/components/StorageRecoveryDialog';
 
 type AppScreen = 'login' | 'portal' | 'dashboard';
 
@@ -56,6 +57,9 @@ export default function App() {
           </AppLayout>
         )}
         <Toaster />
+        {/* Global handler that opens a recovery dialog if any IndexedDB write
+            fails (almost always: browser quota exceeded). */}
+        <StorageRecoveryDialog />
       </ThemeProvider>
     </QueryClientProvider>
   );

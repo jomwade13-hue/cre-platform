@@ -69,6 +69,39 @@ export async function idbDel(key: string): Promise<void> {
   } catch { /* noop */ }
 }
 
+/** Notify the app when an IDB write fails (typically quota-exceeded). UI
+ *  components subscribe to surface a recovery dialog. */
+export interface IdbWriteFailureDetail {
+  key: string;
+  error: unknown;
+  estimate?: { usage?: number; quota?: number };
+}
+
+const IDB_WRITE_FAILURE_EVENT = 'cre:idb-write-failure';
+
+export function onIdbWriteFailure(
+  handler: (detail: IdbWriteFailureDetail) => void,
+): () => void {
+  const listener = (e: Event) => handler((e as CustomEvent<IdbWriteFailureDetail>).detail);
+  window.addEventListener(IDB_WRITE_FAILURE_EVENT, listener as EventListener);
+  return () => window.removeEventListener(IDB_WRITE_FAILURE_EVENT, listener as EventListener);
+}
+
+async function emitWriteFailure(key: string, error: unknown): Promise<void> {
+  let estimate: { usage?: number; quota?: number } | undefined;
+  try {
+    if (navigator?.storage?.estimate) {
+      const e = await navigator.storage.estimate();
+      estimate = { usage: e.usage, quota: e.quota };
+    }
+  } catch { /* noop */ }
+  try {
+    window.dispatchEvent(new CustomEvent<IdbWriteFailureDetail>(IDB_WRITE_FAILURE_EVENT, {
+      detail: { key, error, estimate },
+    }));
+  } catch { /* noop */ }
+}
+
 /** One-time migration helper: if `key` lives in localStorage, copy to IDB and remove. */
 async function migrateFromLocalStorage<T>(key: string): Promise<T | undefined> {
   try {
@@ -128,16 +161,10 @@ export function useIDBPersistedState<T>(
     idbSet(key, state).catch(err => {
       // eslint-disable-next-line no-console
       console.error(`[useIDBPersistedState] persist failed for '${key}':`, err);
-      try {
-        const flagKey = `__idb_warned_${key}`;
-        if (!(window as any)[flagKey]) {
-          (window as any)[flagKey] = true;
-          window.alert(
-            `Storage write failed while saving '${key}'. ` +
-            'Your browser may be near its storage quota — try removing older photos or documents.'
-          );
-        }
-      } catch { /* noop */ }
+      // Emit a recoverable event so a single global UI handler can surface
+      // a useful dialog (with cleanup options) rather than a blocking alert
+      // that fires once per session and then silently swallows the rest.
+      void emitWriteFailure(key, err);
     });
   }, [key, state]);
 

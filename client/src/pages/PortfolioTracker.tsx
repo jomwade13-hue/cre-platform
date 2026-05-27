@@ -293,7 +293,15 @@ function BuildingProfileModal({
     const file = e.target.files?.[0];
     if (!file) return;
     // Downscale + JPEG-compress so the data URL fits in localStorage.
-    const dataUrl = await compressImageFile(file, { maxDimension: 1600, quality: 0.82 });
+    // Cap each photo at ~300 KB so a portfolio can hold many photos without
+    // hitting the browser's storage quota.
+    const dataUrl = await compressImageFile(file, {
+      maxDimension: 1280,
+      quality: 0.8,
+      targetMaxBytes: 300 * 1024,
+      minQuality: 0.5,
+      minDimension: 720,
+    });
     setNewPhotoUrl(dataUrl);
     if (!newPhotoLabel) setNewPhotoLabel(file.name.replace(/\.[^.]+$/, ''));
   };
@@ -467,8 +475,15 @@ function BuildingProfileModal({
                 <input type="file" accept="image/*" className="hidden" onChange={async e => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  // Logos: smaller dimension cap is plenty for branding.
-                  const dataUrl = await compressImageFile(file, { maxDimension: 480, quality: 0.9 });
+                  // Logos: small dimension cap + hard byte target so we never
+                  // re-fill the quota with branding assets.
+                  const dataUrl = await compressImageFile(file, {
+                    maxDimension: 320,
+                    quality: 0.85,
+                    targetMaxBytes: 40 * 1024,
+                    minQuality: 0.6,
+                    minDimension: 200,
+                  });
                   onSetClientLogo(dataUrl);
                 }} />
               </label>
@@ -6335,12 +6350,19 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           ) : (
             <label className="p-2 bg-blue-50 dark:bg-blue-950/50 rounded-lg cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-950/70 transition-colors" title="Upload client logo">
               <ImagePlus className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-              <input type="file" accept="image/*" className="hidden" onChange={e => {
+              <input type="file" accept="image/*" className="hidden" onChange={async e => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => setDashboardLogo(reader.result as string);
-                reader.readAsDataURL(file);
+                // Compress dashboard logo to a small data URL so it doesn't
+                // eat storage budget. Each compressed logo lands ~25-40 KB.
+                const dataUrl = await compressImageFile(file, {
+                  maxDimension: 320,
+                  quality: 0.85,
+                  targetMaxBytes: 40 * 1024,
+                  minQuality: 0.6,
+                  minDimension: 200,
+                });
+                setDashboardLogo(dataUrl);
               }} />
             </label>
           )}

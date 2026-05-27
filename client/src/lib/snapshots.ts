@@ -34,21 +34,27 @@ const KV_STORE = 'kv';
 const SNAP_STORE = 'snapshots';
 const DB_VERSION = 2; // bumped from 1 to add the snapshots store
 
-export const MAX_SNAPSHOTS = 30;
-export const AUTO_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+export const MAX_SNAPSHOTS = 15;
+export const AUTO_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 export const AUTO_DOWNLOAD_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// Soft cap on total snapshot byte usage. When exceeded we aggressively purge
+// the oldest auto-saved snapshots to free quota space.
+export const SNAPSHOT_BYTE_BUDGET = 50 * 1024 * 1024; // 50 MB
 
 // Settings keys
 const LS_AUTO_DL_ENABLED = 'cre_auto_download_enabled';
 const LS_AUTO_DL_LAST = 'cre_auto_download_last_run';
 
-// IndexedDB-backed keys we know about. We also enumerate everything in the
-// kv store at snapshot time to catch keys not listed here.
-const KNOWN_IDB_KEYS = [
+// Binary-blob IDB keys excluded from snapshots — these are the photos, PDFs,
+// and client logos. Including them in snapshots was duplicating every uploaded
+// asset across up to 30 snapshots, blowing through the browser storage quota.
+// The live data still lives in the kv store; snapshots just won't copy it.
+const SNAPSHOT_EXCLUDED_IDB_KEYS = new Set<string>([
   'cre_lease_documents',
   'cre_lease_photos',
   'cre_client_logos',
-];
+]);
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -114,11 +120,12 @@ async function captureIDB(): Promise<Record<string, any>> {
   const out: Record<string, any> = {};
   try {
     const db = await getDB();
-    // Read everything in the kv store, plus the known keys to be safe.
+    // Read every key in the kv store, but skip the binary-blob keys so
+    // snapshots stay small and don't multiply photo/PDF storage 30x.
     const keys = (await db.getAllKeys(KV_STORE)) as IDBValidKey[];
-    const merged = new Set<string>(KNOWN_IDB_KEYS);
-    keys.forEach(k => { if (typeof k === 'string') merged.add(k); });
-    for (const key of merged) {
+    for (const key of keys) {
+      if (typeof key !== 'string') continue;
+      if (SNAPSHOT_EXCLUDED_IDB_KEYS.has(key)) continue;
       const v = await db.get(KV_STORE, key);
       if (v !== undefined) out[key] = v;
     }
@@ -243,11 +250,13 @@ export async function restoreSnapshot(id: string): Promise<void> {
     toRemove.forEach(k => window.localStorage.removeItem(k));
   }
 
-  // Wipe known IDB keys (and any present in the snapshot).
-  const idbKeysToWipe = new Set<string>([
-    ...KNOWN_IDB_KEYS,
-    ...Object.keys(snap.data.idb || {}),
-  ]);
+  // Wipe IDB keys that the snapshot is about to restore. Critically, we
+  // do NOT wipe the binary-blob keys (photos, documents, logos) because
+  // snapshots no longer include those — wiping them would destroy the
+  // user's uploaded assets with nothing to replace them with.
+  const idbKeysToWipe = new Set<string>(
+    Object.keys(snap.data.idb || {}).filter(k => !SNAPSHOT_EXCLUDED_IDB_KEYS.has(k))
+  );
   try {
     const db = await getDB();
     for (const k of idbKeysToWipe) {
@@ -324,30 +333,107 @@ async function pruneOldSnapshots(): Promise<void> {
   try {
     const db = await getDB();
     const all = (await db.getAll(SNAP_STORE)) as Snapshot[];
-    if (all.length <= MAX_SNAPSHOTS) return;
-    // Sort oldest → newest; prune oldest AUTO snapshots first, then oldest manual.
     const sorted = [...all].sort((a, b) => a.createdAt - b.createdAt);
-    const overflow = sorted.length - MAX_SNAPSHOTS;
-    let removed = 0;
-    // Pass 1: auto only
-    for (const s of sorted) {
-      if (removed >= overflow) break;
-      if (s.autoSaved) {
-        await db.delete(SNAP_STORE, s.id);
-        removed++;
-      }
-    }
-    if (removed < overflow) {
-      // Pass 2: manual (oldest first)
+    const toDelete = new Set<string>();
+
+    // Pass A — enforce count cap.
+    if (sorted.length > MAX_SNAPSHOTS) {
+      const overflow = sorted.length - MAX_SNAPSHOTS;
+      let removed = 0;
       for (const s of sorted) {
         if (removed >= overflow) break;
-        if (!s.autoSaved) {
-          await db.delete(SNAP_STORE, s.id);
-          removed++;
+        if (s.autoSaved) { toDelete.add(s.id); removed++; }
+      }
+      if (removed < overflow) {
+        for (const s of sorted) {
+          if (removed >= overflow) break;
+          if (!s.autoSaved && !toDelete.has(s.id)) { toDelete.add(s.id); removed++; }
         }
       }
     }
+
+    // Pass B — enforce byte budget. Drop oldest auto-saves first.
+    let totalBytes = sorted.reduce((sum, s) => sum + (toDelete.has(s.id) ? 0 : (s.sizeBytes || 0)), 0);
+    if (totalBytes > SNAPSHOT_BYTE_BUDGET) {
+      for (const s of sorted) {
+        if (totalBytes <= SNAPSHOT_BYTE_BUDGET) break;
+        if (toDelete.has(s.id)) continue;
+        if (s.autoSaved) {
+          toDelete.add(s.id);
+          totalBytes -= (s.sizeBytes || 0);
+        }
+      }
+      // Still over budget? Start dropping manual snapshots too (oldest first).
+      if (totalBytes > SNAPSHOT_BYTE_BUDGET) {
+        for (const s of sorted) {
+          if (totalBytes <= SNAPSHOT_BYTE_BUDGET) break;
+          if (toDelete.has(s.id)) continue;
+          toDelete.add(s.id);
+          totalBytes -= (s.sizeBytes || 0);
+        }
+      }
+    }
+
+    for (const id of toDelete) {
+      try { await db.delete(SNAP_STORE, id); } catch { /* noop */ }
+    }
   } catch { /* noop */ }
+}
+
+/**
+ * One-time migration: trim binary blobs out of legacy snapshots that captured
+ * them. Recomputes sizeBytes after stripping. Safe to run on every boot.
+ */
+export async function migrateSnapshotsStripBlobs(): Promise<{ trimmedCount: number; bytesFreed: number }> {
+  let trimmedCount = 0;
+  let bytesFreed = 0;
+  try {
+    const db = await getDB();
+    const all = (await db.getAll(SNAP_STORE)) as Snapshot[];
+    for (const snap of all) {
+      const idb = snap.data?.idb || {};
+      let touched = false;
+      let freed = 0;
+      for (const k of Object.keys(idb)) {
+        if (SNAPSHOT_EXCLUDED_IDB_KEYS.has(k)) {
+          try { freed += JSON.stringify(idb[k]).length; } catch { /* noop */ }
+          delete idb[k];
+          touched = true;
+        }
+      }
+      if (touched) {
+        snap.data.idb = idb;
+        try { snap.sizeBytes = JSON.stringify(snap.data).length; } catch { /* noop */ }
+        try { snap.fingerprint = fingerprintFor(snap.data); } catch { /* noop */ }
+        await db.put(SNAP_STORE, snap);
+        trimmedCount++;
+        bytesFreed += freed;
+      }
+    }
+    // After trimming, re-run the count/byte prune in case we're still over.
+    await pruneOldSnapshots();
+  } catch { /* noop */ }
+  return { trimmedCount, bytesFreed };
+}
+
+/**
+ * Emergency recovery: delete every auto-saved snapshot. Manual snapshots are
+ * preserved. Returns the number of snapshots removed and bytes freed.
+ */
+export async function clearAutoSnapshots(): Promise<{ removed: number; bytesFreed: number }> {
+  let removed = 0;
+  let bytesFreed = 0;
+  try {
+    const db = await getDB();
+    const all = (await db.getAll(SNAP_STORE)) as Snapshot[];
+    for (const s of all) {
+      if (s.autoSaved) {
+        bytesFreed += s.sizeBytes || 0;
+        try { await db.delete(SNAP_STORE, s.id); removed++; } catch { /* noop */ }
+      }
+    }
+  } catch { /* noop */ }
+  return { removed, bytesFreed };
 }
 
 // ─── Auto-snapshot scheduler ──────────────────────────────────────────

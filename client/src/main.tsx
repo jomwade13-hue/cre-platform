@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import 'leaflet/dist/leaflet.css';
-import { startAutoSnapshot, startAutoDownload } from './lib/snapshots';
+import { startAutoSnapshot, startAutoDownload, migrateSnapshotsStripBlobs } from './lib/snapshots';
 
 if (!window.location.hash) {
   window.location.hash = "#/";
@@ -38,7 +38,20 @@ try {
 
 createRoot(document.getElementById("root")!).render(<App />);
 
-// Auto-snapshot loop — every 10 minutes, snapshot the dashboard if data changed.
+// One-time migration: strip binary blobs out of legacy snapshots. Older builds
+// captured every photo/document/logo into every auto-snapshot — with 30 snapshots
+// and a few MB of photos this filled the browser's IndexedDB quota and broke
+// new uploads. Running this on boot reclaims that space.
+try {
+  migrateSnapshotsStripBlobs().then(r => {
+    if (r.trimmedCount > 0) {
+      // eslint-disable-next-line no-console
+      console.info(`[snapshots] Reclaimed ${(r.bytesFreed / 1024 / 1024).toFixed(1)} MB from ${r.trimmedCount} legacy snapshot(s).`);
+    }
+  }).catch(() => { /* best-effort */ });
+} catch { /* best-effort */ }
+
+// Auto-snapshot loop — every 30 minutes, snapshot the dashboard if data changed.
 // Users can also create manual snapshots via the Version History menu.
 try { startAutoSnapshot(); } catch { /* best-effort */ }
 
