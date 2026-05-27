@@ -50,11 +50,25 @@ const LS_AUTO_DL_LAST = 'cre_auto_download_last_run';
 // and client logos. Including them in snapshots was duplicating every uploaded
 // asset across up to 30 snapshots, blowing through the browser storage quota.
 // The live data still lives in the kv store; snapshots just won't copy it.
-const SNAPSHOT_EXCLUDED_IDB_KEYS = new Set<string>([
+//
+// With split-record storage the actual blobs live under per-entry keys like
+// `cre_lease_photos__entry:<leaseId>` plus an index at `cre_lease_photos__index`.
+// Any key starting with one of these prefixes is treated as excluded.
+const SNAPSHOT_EXCLUDED_PREFIXES = [
   'cre_lease_documents',
   'cre_lease_photos',
   'cre_client_logos',
-]);
+] as const;
+
+function isExcludedFromSnapshots(key: string): boolean {
+  for (const p of SNAPSHOT_EXCLUDED_PREFIXES) {
+    if (key === p || key.startsWith(p + '__')) return true;
+  }
+  return false;
+}
+
+// Kept for backwards compatibility with code that already imports the set.
+export const SNAPSHOT_EXCLUDED_IDB_KEYS = new Set<string>(SNAPSHOT_EXCLUDED_PREFIXES);
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -125,7 +139,7 @@ async function captureIDB(): Promise<Record<string, any>> {
     const keys = (await db.getAllKeys(KV_STORE)) as IDBValidKey[];
     for (const key of keys) {
       if (typeof key !== 'string') continue;
-      if (SNAPSHOT_EXCLUDED_IDB_KEYS.has(key)) continue;
+      if (isExcludedFromSnapshots(key)) continue;
       const v = await db.get(KV_STORE, key);
       if (v !== undefined) out[key] = v;
     }
@@ -255,7 +269,7 @@ export async function restoreSnapshot(id: string): Promise<void> {
   // snapshots no longer include those — wiping them would destroy the
   // user's uploaded assets with nothing to replace them with.
   const idbKeysToWipe = new Set<string>(
-    Object.keys(snap.data.idb || {}).filter(k => !SNAPSHOT_EXCLUDED_IDB_KEYS.has(k))
+    Object.keys(snap.data.idb || {}).filter(k => !isExcludedFromSnapshots(k))
   );
   try {
     const db = await getDB();
@@ -395,7 +409,7 @@ export async function migrateSnapshotsStripBlobs(): Promise<{ trimmedCount: numb
       let touched = false;
       let freed = 0;
       for (const k of Object.keys(idb)) {
-        if (SNAPSHOT_EXCLUDED_IDB_KEYS.has(k)) {
+        if (isExcludedFromSnapshots(k)) {
           try { freed += JSON.stringify(idb[k]).length; } catch { /* noop */ }
           delete idb[k];
           touched = true;

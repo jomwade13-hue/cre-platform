@@ -15,7 +15,12 @@
  */
 
 import { compressDataUrl, dataUrlByteSize } from './imageUtils';
-import { idbGet, idbSet } from './useIDBPersistedState';
+import {
+  idbGet,
+  idbSet,
+  splitRecordGetAll,
+  splitRecordSetEntry,
+} from './useIDBPersistedState';
 
 const LOGOS_KEY = 'cre_client_logos';
 const PHOTOS_KEY = 'cre_lease_photos';
@@ -57,15 +62,41 @@ async function compressLogos(): Promise<{ compressed: number; bytesFreed: number
   let compressed = 0;
   let bytesFreed = 0;
   let errors = 0;
-  try {
-    const logos = (await idbGet<Record<string, string>>(LOGOS_KEY)) || {};
-    const keys = Object.keys(logos);
-    if (keys.length === 0) return { compressed, bytesFreed, errors };
 
-    const next: Record<string, string> = { ...logos };
-    let changed = false;
-    for (const k of keys) {
-      const v = logos[k];
+  // (a) Legacy single-key format — still present until the split-record
+  // hook runs its migration on this device.
+  try {
+    const legacy = await idbGet<Record<string, string>>(LOGOS_KEY);
+    if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+      const next: Record<string, string> = { ...legacy };
+      let changed = false;
+      for (const k of Object.keys(legacy)) {
+        const v = legacy[k];
+        if (!v || typeof v !== 'string' || !v.startsWith('data:image/')) continue;
+        const beforeBytes = dataUrlByteSize(v);
+        if (beforeBytes <= LOGO_TARGET_BYTES) continue;
+        try {
+          const recomp = await compressDataUrl(v, LOGO_OPTS);
+          const afterBytes = dataUrlByteSize(recomp);
+          if (afterBytes < beforeBytes) {
+            next[k] = recomp;
+            bytesFreed += beforeBytes - afterBytes;
+            compressed += 1;
+            changed = true;
+          }
+        } catch { errors += 1; }
+      }
+      if (changed) {
+        try { await idbSet(LOGOS_KEY, next); } catch { errors += 1; }
+      }
+    }
+  } catch { errors += 1; }
+
+  // (b) New split-record format — each logo lives under its own IDB key.
+  try {
+    const split = await splitRecordGetAll<string>(LOGOS_KEY);
+    for (const k of Object.keys(split)) {
+      const v = split[k];
       if (!v || typeof v !== 'string' || !v.startsWith('data:image/')) continue;
       const beforeBytes = dataUrlByteSize(v);
       if (beforeBytes <= LOGO_TARGET_BYTES) continue;
@@ -73,74 +104,93 @@ async function compressLogos(): Promise<{ compressed: number; bytesFreed: number
         const recomp = await compressDataUrl(v, LOGO_OPTS);
         const afterBytes = dataUrlByteSize(recomp);
         if (afterBytes < beforeBytes) {
-          next[k] = recomp;
+          await splitRecordSetEntry(LOGOS_KEY, k, recomp);
           bytesFreed += beforeBytes - afterBytes;
           compressed += 1;
-          changed = true;
         }
-      } catch {
-        errors += 1;
-      }
+      } catch { errors += 1; }
     }
-    if (changed) {
-      await idbSet(LOGOS_KEY, next);
-    }
-  } catch {
-    errors += 1;
-  }
+  } catch { errors += 1; }
+
   return { compressed, bytesFreed, errors };
+}
+
+async function compressPhotoList(
+  list: LeasePhotoLike[],
+): Promise<{ next: LeasePhotoLike[]; changed: boolean; compressed: number; bytesFreed: number; errors: number }> {
+  let compressed = 0;
+  let bytesFreed = 0;
+  let errors = 0;
+  let changed = false;
+  const next: LeasePhotoLike[] = [];
+  for (const photo of list) {
+    if (!photo || typeof photo.url !== 'string' || !photo.url.startsWith('data:image/')) {
+      next.push(photo);
+      continue;
+    }
+    const beforeBytes = dataUrlByteSize(photo.url);
+    if (beforeBytes <= PHOTO_TARGET_BYTES) {
+      next.push(photo);
+      continue;
+    }
+    try {
+      const recomp = await compressDataUrl(photo.url, PHOTO_OPTS);
+      const afterBytes = dataUrlByteSize(recomp);
+      if (afterBytes < beforeBytes) {
+        next.push({ ...photo, url: recomp });
+        bytesFreed += beforeBytes - afterBytes;
+        compressed += 1;
+        changed = true;
+      } else {
+        next.push(photo);
+      }
+    } catch {
+      next.push(photo);
+      errors += 1;
+    }
+  }
+  return { next, changed, compressed, bytesFreed, errors };
 }
 
 async function compressPhotos(): Promise<{ compressed: number; bytesFreed: number; errors: number }> {
   let compressed = 0;
   let bytesFreed = 0;
   let errors = 0;
+
+  // (a) Legacy single-key format.
   try {
-    const photos = (await idbGet<Record<string, LeasePhotoLike[]>>(PHOTOS_KEY)) || {};
-    const leaseIds = Object.keys(photos);
-    if (leaseIds.length === 0) return { compressed, bytesFreed, errors };
-
-    const next: Record<string, LeasePhotoLike[]> = {};
-    let changed = false;
-
-    for (const leaseId of leaseIds) {
-      const list = Array.isArray(photos[leaseId]) ? photos[leaseId] : [];
-      const newList: LeasePhotoLike[] = [];
-      for (const photo of list) {
-        if (!photo || typeof photo.url !== 'string' || !photo.url.startsWith('data:image/')) {
-          newList.push(photo);
-          continue;
-        }
-        const beforeBytes = dataUrlByteSize(photo.url);
-        if (beforeBytes <= PHOTO_TARGET_BYTES) {
-          newList.push(photo);
-          continue;
-        }
-        try {
-          const recomp = await compressDataUrl(photo.url, PHOTO_OPTS);
-          const afterBytes = dataUrlByteSize(recomp);
-          if (afterBytes < beforeBytes) {
-            newList.push({ ...photo, url: recomp });
-            bytesFreed += beforeBytes - afterBytes;
-            compressed += 1;
-            changed = true;
-          } else {
-            newList.push(photo);
-          }
-        } catch {
-          newList.push(photo);
-          errors += 1;
-        }
+    const legacy = await idbGet<Record<string, LeasePhotoLike[]>>(PHOTOS_KEY);
+    if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+      const out: Record<string, LeasePhotoLike[]> = {};
+      let dirty = false;
+      for (const leaseId of Object.keys(legacy)) {
+        const r = await compressPhotoList(Array.isArray(legacy[leaseId]) ? legacy[leaseId] : []);
+        out[leaseId] = r.next;
+        compressed += r.compressed;
+        bytesFreed += r.bytesFreed;
+        errors += r.errors;
+        if (r.changed) dirty = true;
       }
-      next[leaseId] = newList;
+      if (dirty) {
+        try { await idbSet(PHOTOS_KEY, out); } catch { errors += 1; }
+      }
     }
+  } catch { errors += 1; }
 
-    if (changed) {
-      await idbSet(PHOTOS_KEY, next);
+  // (b) New split-record format — each lease's photo array under its own key.
+  try {
+    const split = await splitRecordGetAll<LeasePhotoLike[]>(PHOTOS_KEY);
+    for (const leaseId of Object.keys(split)) {
+      const r = await compressPhotoList(Array.isArray(split[leaseId]) ? split[leaseId] : []);
+      compressed += r.compressed;
+      bytesFreed += r.bytesFreed;
+      errors += r.errors;
+      if (r.changed) {
+        try { await splitRecordSetEntry(PHOTOS_KEY, leaseId, r.next); } catch { errors += 1; }
+      }
     }
-  } catch {
-    errors += 1;
-  }
+  } catch { errors += 1; }
+
   return { compressed, bytesFreed, errors };
 }
 

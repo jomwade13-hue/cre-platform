@@ -36,7 +36,7 @@ import { cn } from '@/lib/utils';
 import { useBranding } from '@/components/Layout';
 import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
 import { usePersistedState } from '@/lib/usePersistedState';
-import { useIDBPersistedState } from '@/lib/useIDBPersistedState';
+import { useIDBPersistedState, useIDBSplitRecordState } from '@/lib/useIDBPersistedState';
 import { compressImageFile } from '@/lib/imageUtils';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
@@ -6025,13 +6025,16 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   );
   const [notes,     setNotes]     = usePersistedState<Record<number, LeaseNote[]>>('cre_lease_notes', initialLeaseNotes);
   // Heavy keys (data URLs for documents/photos) move to IndexedDB so they don't blow the ~5 MB localStorage cap.
-  const [documents, setDocuments] = useIDBPersistedState<Record<number, LeaseDocument[]>>('cre_lease_documents', initialLeaseDocuments);
-  const [photos,    setPhotos]    = useIDBPersistedState<Record<number, LeasePhoto[]>>('cre_lease_photos', PLACEHOLDER_PHOTOS);
+  // Photos, documents, and logos use split-record persistence so each
+  // lease (or client) is stored under its own IDB key. That keeps every
+  // save tiny no matter how much data is already in storage.
+  const [documents, setDocuments] = useIDBSplitRecordState<LeaseDocument[]>('cre_lease_documents', initialLeaseDocuments as unknown as Record<string, LeaseDocument[]>) as unknown as [Record<number, LeaseDocument[]>, React.Dispatch<React.SetStateAction<Record<number, LeaseDocument[]>>>];
+  const [photos,    setPhotos]    = useIDBSplitRecordState<LeasePhoto[]>('cre_lease_photos', PLACEHOLDER_PHOTOS as unknown as Record<string, LeasePhoto[]>) as unknown as [Record<number, LeasePhoto[]>, React.Dispatch<React.SetStateAction<Record<number, LeasePhoto[]>>>];
   const [qbrEntries, setQbrEntries] = usePersistedState<QBREntry[]>('cre_qbr_entries', INITIAL_QBR_ENTRIES);
   const [manualDates, setManualDates] = usePersistedState<Record<number, string>>('cre_manual_dates', {});
   const [profileId,   setProfileId]   = useState<number | null>(null);
   const [slideDeckOpen, setSlideDeckOpen] = useState(false);
-  const [clientLogos, setClientLogos] = useIDBPersistedState<Record<string, string>>('cre_client_logos', INITIAL_CLIENT_LOGOS);
+  const [clientLogos, setClientLogos] = useIDBSplitRecordState<string>('cre_client_logos', INITIAL_CLIENT_LOGOS);
   const [printReportOpen, setPrintReportOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [portfolioName, setPortfolioName] = useState('Learfield Portfolio');

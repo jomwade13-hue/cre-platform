@@ -37,6 +37,18 @@ try {
   }
 } catch { /* migration is best-effort */ }
 
+// Ask the browser to mark our storage as persistent. In Chrome/Edge this
+// also tends to grant a much larger quota; in Firefox it shows a one-time
+// prompt the first time. Either way the answer is fine — best-effort.
+try {
+  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+    navigator.storage.persist().then(granted => {
+      // eslint-disable-next-line no-console
+      console.info(`[storage] persistent storage ${granted ? 'granted' : 'not granted'}`);
+    }).catch(() => { /* best-effort */ });
+  }
+} catch { /* best-effort */ }
+
 createRoot(document.getElementById("root")!).render(<App />);
 
 // One-time migration: strip binary blobs out of legacy snapshots. Older builds
