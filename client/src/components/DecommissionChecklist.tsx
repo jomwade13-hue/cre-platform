@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Plus, Trash2, CheckCircle2, AlertCircle, Save, ChevronDown, ChevronUp,
-  Printer, X, MapPin,
+  Printer, X, MapPin, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -124,6 +124,15 @@ function LeasePanel({
       ...data,
       checklist: [...data.checklist, { id: `t-${Date.now()}`, task: '', owner: '', dueDate: '', done: false }],
     });
+  const moveTask = (id: string, direction: 'up' | 'down') => {
+    const idx = data.checklist.findIndex(t => t.id === id);
+    if (idx < 0) return;
+    const swapWith = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapWith < 0 || swapWith >= data.checklist.length) return;
+    const next = data.checklist.slice();
+    [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+    onChange({ ...data, checklist: next });
+  };
 
   /* services */
   const addService = () => {
@@ -288,16 +297,17 @@ function LeasePanel({
                     <th className="px-2 py-2 font-semibold w-40">Owner</th>
                     <th className="px-2 py-2 font-semibold w-32">Due Date</th>
                     <th className="px-2 py-2 font-semibold w-24">Status</th>
+                    {!readOnly && <th className="w-10 px-1 py-2"><span className="sr-only">Reorder</span></th>}
                     {!readOnly && <th className="w-8 px-2 py-2"></th>}
                   </tr>
                 </thead>
                 <tbody>
                   {data.checklist.length === 0 && (
-                    <tr><td colSpan={readOnly ? 5 : 6} className="px-2 py-4 text-center text-muted-foreground italic">
+                    <tr><td colSpan={readOnly ? 5 : 7} className="px-2 py-4 text-center text-muted-foreground italic">
                       No tasks yet. Click "Add Task" to begin.
                     </td></tr>
                   )}
-                  {data.checklist.map(task => {
+                  {data.checklist.map((task, taskIdx) => {
                     const status = statusOf(task);
                     const ringClass =
                       status === 'On Track' ? 'border-green-500 bg-green-500 text-white' :
@@ -363,6 +373,32 @@ function LeasePanel({
                         <td className={cn('px-2 py-1.5 text-xs', statusClass)} data-testid={`decom-task-status-${task.id}`}>
                           {status}
                         </td>
+                        {!readOnly && (
+                          <td className="px-1 py-1.5 align-middle">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => moveTask(task.id, 'up')}
+                                disabled={taskIdx === 0}
+                                className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move task up"
+                                aria-label="Move task up"
+                                data-testid={`decom-task-move-up-${task.id}`}
+                              >
+                                <ArrowUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => moveTask(task.id, 'down')}
+                                disabled={taskIdx === data.checklist.length - 1}
+                                className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                title="Move task down"
+                                aria-label="Move task down"
+                                data-testid={`decom-task-move-down-${task.id}`}
+                              >
+                                <ArrowDown className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
                         {!readOnly && (
                           <td className="px-2 py-1.5">
                             <button
