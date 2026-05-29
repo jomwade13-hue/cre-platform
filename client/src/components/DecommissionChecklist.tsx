@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Plus, Trash2, CheckCircle2, AlertCircle, Save, ChevronDown, ChevronUp,
-  Printer, X, MapPin, ArrowUp, ArrowDown,
+  Printer, X, MapPin, ArrowUp, ArrowDown, GripVertical,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -132,6 +132,52 @@ function LeasePanel({
     const next = data.checklist.slice();
     [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
     onChange({ ...data, checklist: next });
+  };
+
+  /* drag-and-drop reorder */
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState<{ idx: number; position: 'before' | 'after' } | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    if (readOnly) return;
+    setDragId(taskId);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', taskId); } catch { /* Safari */ }
+  };
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    if (readOnly || !dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const position: 'before' | 'after' =
+      (e.clientY - rect.top) / Math.max(1, rect.height) < 0.5 ? 'before' : 'after';
+    setDragOver(prev =>
+      prev && prev.idx === idx && prev.position === position ? prev : { idx, position }
+    );
+  };
+
+  const handleDrop = (e: React.DragEvent, targetIdx: number) => {
+    if (readOnly) return;
+    e.preventDefault();
+    if (!dragId) return;
+    const fromIdx = data.checklist.findIndex(t => t.id === dragId);
+    const position = dragOver?.position ?? 'before';
+    setDragId(null);
+    setDragOver(null);
+    if (fromIdx < 0) return;
+    let insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+    if (fromIdx < insertIdx) insertIdx -= 1;
+    if (insertIdx === fromIdx) return;
+    const next = data.checklist.slice();
+    const [moved] = next.splice(fromIdx, 1);
+    next.splice(insertIdx, 0, moved);
+    onChange({ ...data, checklist: next });
+  };
+
+  const handleDragEnd = () => {
+    setDragId(null);
+    setDragOver(null);
   };
 
   /* services */
@@ -292,6 +338,7 @@ function LeasePanel({
               <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
+                    {!readOnly && <th className="w-6 px-1 py-2"><span className="sr-only">Drag handle</span></th>}
                     <th className="w-8 px-2 py-2"></th>
                     <th className="px-2 py-2 font-semibold">Task</th>
                     <th className="px-2 py-2 font-semibold w-40">Owner</th>
@@ -303,7 +350,7 @@ function LeasePanel({
                 </thead>
                 <tbody>
                   {data.checklist.length === 0 && (
-                    <tr><td colSpan={readOnly ? 5 : 7} className="px-2 py-4 text-center text-muted-foreground italic">
+                    <tr><td colSpan={readOnly ? 5 : 8} className="px-2 py-4 text-center text-muted-foreground italic">
                       No tasks yet. Click "Add Task" to begin.
                     </td></tr>
                   )}
@@ -317,8 +364,34 @@ function LeasePanel({
                       status === 'On Track' ? 'text-green-600 dark:text-green-400 font-semibold' :
                       status === 'At Risk'  ? 'text-red-600 dark:text-red-400 font-semibold' :
                                               'text-slate-900 dark:text-slate-100';
+                    const isDragged = dragId === task.id;
+                    const isDropTarget = !!dragOver && dragOver.idx === taskIdx && !isDragged;
                     return (
-                      <tr key={task.id} className="border-t hover:bg-muted/30 transition-colors">
+                      <tr
+                        key={task.id}
+                        draggable={!readOnly}
+                        onDragStart={(e) => handleDragStart(e, task.id)}
+                        onDragOver={(e) => handleDragOver(e, taskIdx)}
+                        onDrop={(e) => handleDrop(e, taskIdx)}
+                        onDragEnd={handleDragEnd}
+                        className={cn(
+                          'border-t hover:bg-muted/30 transition-colors',
+                          isDragged && 'opacity-40',
+                          isDropTarget && dragOver?.position === 'before' && 'border-t-2 border-t-primary',
+                          isDropTarget && dragOver?.position === 'after' && 'border-b-2 border-b-primary',
+                        )}
+                        data-testid={`decom-task-row-${task.id}`}
+                      >
+                        {!readOnly && (
+                          <td
+                            className="px-1 py-2 align-middle text-muted-foreground hover:text-foreground cursor-move select-none"
+                            title="Drag to reorder"
+                            aria-label="Drag to reorder"
+                            data-testid={`decom-task-drag-${task.id}`}
+                          >
+                            <GripVertical className="w-3.5 h-3.5 mx-auto" />
+                          </td>
+                        )}
                         <td className="px-2 py-2 align-middle">
                           <button
                             onClick={() => !readOnly && updateTask(task.id, { done: !task.done })}
