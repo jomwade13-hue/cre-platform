@@ -96,13 +96,14 @@ function progressSummary(data: DecomData) {
 /* ───────────────────── Single-lease panel ───────────────────── */
 
 function LeasePanel({
-  lease, data, onChange, readOnly, onViewProfile,
+  lease, data, onChange, readOnly, onViewProfile, onPrint,
 }: {
   lease: ClosedLeaseInfo;
   data: DecomData;
   onChange: (next: DecomData) => void;
   readOnly?: boolean;
   onViewProfile?: (leaseId: number) => void;
+  onPrint?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [newService, setNewService] = useState('');
@@ -228,9 +229,23 @@ function LeasePanel({
                 <span className="text-xs text-muted-foreground">— {lease.property}</span>
               </>
             )}
-            <Badge variant="outline" className="border-red-300 text-red-700 dark:border-red-800 dark:text-red-300 text-[10px] ml-auto">
-              {lease.status || 'Decommission'}
-            </Badge>
+            <div className="ml-auto flex items-center gap-2">
+              {onPrint && (
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); onPrint(); }}
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded border border-red-300 text-red-700 dark:border-red-800 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                  title="Print this checklist"
+                  aria-label="Print this checklist"
+                  data-testid={`decom-print-single-${lease.id}`}
+                >
+                  <Printer className="w-3 h-3" /> Print
+                </button>
+              )}
+              <Badge variant="outline" className="border-red-300 text-red-700 dark:border-red-800 dark:text-red-300 text-[10px]">
+                {lease.status || 'Decommission'}
+              </Badge>
+            </div>
           </div>
 
           {/* Meta row */}
@@ -581,33 +596,93 @@ function LeasePanel({
 /* ───────────────────── Print Modal ───────────────────── */
 
 function PrintChecklistsModal({
-  leases, decomData, portfolioName, dashboardLogo, onClose,
+  leases, decomData, portfolioName, dashboardLogo, onClose, singleMode,
 }: {
   leases: ClosedLeaseInfo[];
   decomData: Record<number, DecomData>;
   portfolioName: string;
   dashboardLogo?: string;
   onClose: () => void;
+  singleMode?: boolean;
 }) {
   const reportDate = new Date().toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Inject print CSS once
+  // Inject print CSS once. The selectors here are intentionally aggressive so
+  // every location checklist lands on its own physical page — the modal lives
+  // inside a position:fixed wrapper with overflow-y:auto, both of which can
+  // suppress page breaks during print if not reset.
   useEffect(() => {
     const id = 'decom-print-style';
-    if (document.getElementById(id)) return;
+    const existing = document.getElementById(id);
+    if (existing) existing.remove();
     const style = document.createElement('style');
     style.id = id;
     style.innerHTML = `
       @media print {
-        body * { visibility: hidden; }
-        #decom-print-root, #decom-print-root * { visibility: visible; }
-        #decom-print-root {
-          position: absolute; top: 0; left: 0; right: 0;
-          background: white !important; color: black !important;
+        @page { margin: 0.5in; size: letter; }
+
+        html, body {
+          background: #ffffff !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          height: auto !important;
+          overflow: visible !important;
         }
+
+        /* Hide everything in the document except the print modal's portal
+           wrapper. visibility:hidden leaves boxes occupying flow which pushes
+           our content onto page 2 — display:none collapses them entirely. */
+        body > * { display: none !important; }
+        body > div:has(#decom-print-root) { display: block !important; }
+
+        /* Reset the print root + every ancestor that might constrain layout */
+        #decom-print-root {
+          position: static !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff !important;
+          color: #000000 !important;
+          overflow: visible !important;
+          box-shadow: none !important;
+          width: 100% !important;
+        }
+        body > div:has(#decom-print-root),
+        body > div:has(#decom-print-root) > div {
+          position: static !important;
+          inset: auto !important;
+          top: auto !important; left: auto !important;
+          right: auto !important; bottom: auto !important;
+          background: transparent !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          box-shadow: none !important;
+          border: 0 !important;
+          border-radius: 0 !important;
+          max-width: none !important;
+          width: 100% !important;
+          overflow: visible !important;
+          display: block !important;
+          height: auto !important;
+          max-height: none !important;
+        }
+
         .decom-print-controls { display: none !important; }
-        .decom-print-page { page-break-after: always; }
-        .decom-print-page:last-child { page-break-after: auto; }
+
+        /* One page per location — supports both legacy and modern syntax */
+        .decom-print-page {
+          page-break-after: always !important;
+          break-after: page !important;
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        /* The last printable page (last lease) must NOT force a break, or
+           the trailing footer ends up alone on a final blank page. The
+           footer is the last child of #decom-print-root so :last-child
+           doesn't work — target the last .decom-print-page directly. */
+        .decom-print-page:not(:has(~ .decom-print-page)) {
+          page-break-after: auto !important;
+          break-after: auto !important;
+        }
       }
     `;
     document.head.appendChild(style);
@@ -632,34 +707,39 @@ function PrintChecklistsModal({
         </div>
 
         <div id="decom-print-root" className="p-8 font-sans text-[12px]">
-          {/* Report header */}
-          <div className="decom-print-page">
-            <div className="border-b-2 border-red-600 pb-3 mb-6 flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                {dashboardLogo
-                  ? <img src={dashboardLogo} alt={portfolioName} style={{ height: 32, maxWidth: 160, objectFit: 'contain' }} />
-                  : <div className="w-8 h-8 rounded bg-red-600" />}
-                <div>
-                  <div className="text-[16px] font-bold">{portfolioName}</div>
-                  <div className="text-[18px] font-bold mt-1">Decommission Checklists</div>
-                  <div className="text-[10px] text-gray-500">Prepared {reportDate} · {leases.length} {leases.length === 1 ? 'location' : 'locations'}</div>
+          {/* Report header — only shown when printing the whole set; for a
+              single-lease print we go straight into the lease page so the
+              output is a single tidy page. */}
+          {!singleMode && (
+            <div className="decom-print-page">
+              <div className="border-b-2 border-red-600 pb-3 mb-6 flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  {dashboardLogo
+                    ? <img src={dashboardLogo} alt={portfolioName} style={{ height: 32, maxWidth: 160, objectFit: 'contain' }} />
+                    : <div className="w-8 h-8 rounded bg-red-600" />}
+                  <div>
+                    <div className="text-[16px] font-bold">{portfolioName}</div>
+                    <div className="text-[18px] font-bold mt-1">Decommission Checklists</div>
+                    <div className="text-[10px] text-gray-500">Prepared {reportDate} · {leases.length} {leases.length === 1 ? 'location' : 'locations'}</div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* One page per lease */}
           {leases.map((lease, idx) => {
             const data = decomData[lease.id] ?? newDecomData();
             const { total, done, atRisk } = progressSummary(data);
+            const showRunningHeader = singleMode || idx > 0;
             return (
               <div key={lease.id} className="decom-print-page" style={{ marginBottom: 32 }}>
-                {idx > 0 && (
-                  <div className="flex items-center gap-3 mb-4">
+                {showRunningHeader && (
+                  <div className="flex items-center gap-3 mb-4 pb-2 border-b border-gray-200">
                     {dashboardLogo
                       ? <img src={dashboardLogo} alt="" style={{ height: 20, maxWidth: 100, objectFit: 'contain' }} />
                       : null}
-                    <div className="text-[10px] text-gray-500">{portfolioName} · Decommission Checklists · {reportDate}</div>
+                    <div className="text-[10px] text-gray-500">{portfolioName} · Decommission Checklist · {reportDate}</div>
                   </div>
                 )}
 
@@ -796,7 +876,8 @@ export function DecommissionChecklistModule({
   dashboardLogo?: string;
   onViewProfile?: (leaseId: number) => void;
 }) {
-  const [printOpen, setPrintOpen] = useState(false);
+  // null = closed; 'all' = print every checklist; number = print just that lease
+  const [printTarget, setPrintTarget] = useState<null | 'all' | number>(null);
   const [expandAll, setExpandAll] = useState<null | 'open' | 'closed'>(null);
 
   useEffect(() => {
@@ -817,7 +898,7 @@ export function DecommissionChecklistModule({
           {closedLeases.length} {closedLeases.length === 1 ? 'location' : 'locations'}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setPrintOpen(true)}
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => setPrintTarget('all')}
             data-testid="decom-print-all">
             <Printer className="w-3 h-3" /> Print All / Save PDF
           </Button>
@@ -832,16 +913,18 @@ export function DecommissionChecklistModule({
           onChange={next => onSetDecomData(l.id, next)}
           readOnly={readOnly}
           onViewProfile={onViewProfile}
+          onPrint={() => setPrintTarget(l.id)}
         />
       ))}
 
-      {printOpen && (
+      {printTarget !== null && (
         <PrintChecklistsModal
-          leases={closedLeases}
+          leases={printTarget === 'all' ? closedLeases : closedLeases.filter(l => l.id === printTarget)}
           decomData={decomData}
           portfolioName={portfolioName}
           dashboardLogo={dashboardLogo}
-          onClose={() => setPrintOpen(false)}
+          singleMode={printTarget !== 'all'}
+          onClose={() => setPrintTarget(null)}
         />
       )}
     </div>
