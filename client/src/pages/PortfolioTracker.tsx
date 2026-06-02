@@ -47,7 +47,7 @@ import 'leaflet/dist/leaflet.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const PROPERTY_TYPES = ['Office', 'Healthcare', 'Industrial', 'Retail', 'Coworking'];
+const PROPERTY_TYPES = ['Office', 'Coworking', 'Broadcasting'];
 const CLIENT_LEADS   = ['Alisha Shields', 'Brittney McDonald', 'George Scott', 'Keith Swartzentruber', 'Kim Boren', 'Kristine Schroeder', 'Matt Epperson', 'Sarah Stieferman', 'Travis Hilty'];
 const STATUSES       = ['—', 'Active Disposition', 'Active Initiative', 'Inactive', 'Archive'];
 const STRATEGIES     = [
@@ -2799,18 +2799,23 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
 
 // ── Portfolio Roadmap ─────────────────────────────────────────────────────────
 
-function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManualDate, milestones, clientLogos, dashboardLogo, portfolioName, readOnly }: {
+function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManualDate, milestones, pmStagePlans, onSetPMStageDuration, onApplyPMStagePlan, clientLogos, dashboardLogo, portfolioName, readOnly }: {
   allLeases: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   onViewProfile: (id: number) => void;
   manualDates: Record<number, string>;
   onSetManualDate: (leaseId: number, date: string) => void;
   milestones: Record<number, Milestone[]>;
+  pmStagePlans: Record<number, Record<string, number>>;
+  onSetPMStageDuration: (leaseId: number, stageName: string, weeks: number) => void;
+  onApplyPMStagePlan: (leaseId: number) => void;
   clientLogos: Record<string, string>;
   dashboardLogo: string;
   portfolioName: string;
   readOnly?: boolean;
 }) {
+  // Which PM lease panels are expanded in the Stage Plans section
+  const [expandedPlanIds, setExpandedPlanIds] = useState<Record<number, boolean>>({});
   const [editingDate, setEditingDate] = useState<number | null>(null);
   const [tempDate, setTempDate]       = useState('');
   const [filterLead, setFilterLead]   = useState('all');
@@ -3252,12 +3257,23 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                       {(milestones[lease.id] ?? []).filter(ms => ms.completed !== true).map(ms => {
                         const msPct = toPercent(ms.date);
                         if (msPct < -2 || msPct > 102) return null;
-                        const isOverdue = ms.date < today.toISOString().slice(0, 10);
+                        const todayStr = today.toISOString().slice(0, 10);
+                        const isOverdue = ms.date < todayStr;
+                        // "At Risk" → future milestone within 14 days (not overdue, not far out)
+                        const msTime = new Date(ms.date).getTime();
+                        const daysUntil = Math.ceil((msTime - today.getTime()) / (1000 * 60 * 60 * 24));
+                        const isAtRisk = !isOverdue && daysUntil <= 14;
+                        const diamondColor = isOverdue
+                          ? 'text-red-500 fill-red-500'
+                          : isAtRisk
+                            ? 'text-orange-500 fill-orange-500'
+                            : 'text-amber-500 fill-amber-500';
+                        const tooltipSuffix = isOverdue ? ' (Overdue)' : isAtRisk ? ' (At Risk)' : '';
                         return (
                           <div key={ms.id} className="absolute top-0 bottom-0 flex items-center z-20 pointer-events-auto"
                             style={{ left: `${Math.max(0, Math.min(100, msPct))}%`, transform: 'translateX(-50%)' }}
-                            title={`${ms.label} — ${fmtDateShort(ms.date)}${isOverdue ? ' (Overdue)' : ''}`}>
-                            <Diamond className={cn('w-3.5 h-3.5 drop-shadow', isOverdue ? 'text-red-500 fill-red-500' : 'text-amber-500 fill-amber-500')} />
+                            title={`${ms.label} — ${fmtDateShort(ms.date)}${tooltipSuffix}`}>
+                            <Diamond className={cn('w-3.5 h-3.5 drop-shadow', diamondColor)} />
                           </div>
                         );
                       })}
@@ -3310,6 +3326,8 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
               })}
               <span className="flex items-center gap-1.5"><span className="w-0 h-4 border-l-2 border-red-400 inline-block" />Today</span>
               <span className="flex items-center gap-1.5"><Diamond className="w-3 h-3 text-amber-500 fill-amber-500" />Milestone</span>
+              <span className="flex items-center gap-1.5"><Diamond className="w-3 h-3 text-orange-500 fill-orange-500" />At Risk (≤ 14d)</span>
+              <span className="flex items-center gap-1.5"><Diamond className="w-3 h-3 text-red-500 fill-red-500" />Overdue</span>
               <span className="text-[10px] text-muted-foreground/70">(filled portion = progress)</span>
             </div>
           </div>
@@ -3373,6 +3391,131 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
           </div>
         )}
       </div>
+
+      {/* Project Management Stage Plans */}
+      {pmLeases.length > 0 && (
+        <div className="bg-card border border-border rounded-lg p-4" data-testid="pm-stage-plans-section">
+          <div className="flex items-center gap-2 mb-1">
+            <HardHat className="w-4 h-4 text-violet-500" />
+            <h3 className="text-sm font-semibold">Project Management Stage Plans</h3>
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400">{pmLeases.length}</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3">Set the duration (weeks) for each Project Management stage. Target dates are calculated cumulatively from the lease start date. Click “Apply Plan” to generate milestones on the Gantt chart above.</p>
+          <div className="space-y-2">
+            {pmLeases.map(lease => {
+              const stages = (STRATEGY_STAGES['Project Management'] ?? []).filter(s => s !== '—');
+              const realStages = STRATEGY_STAGES['Project Management']?.filter(s => s !== '—') ?? [];
+              const currentStageIdx = realStages.indexOf(lease.stage); // -1 if not started
+              const plan = pmStagePlans[lease.id] ?? {};
+              const isOpen = expandedPlanIds[lease.id] === true;
+              const startMs = lease.leaseStart ? new Date(lease.leaseStart).getTime() : NaN;
+              const todayMs = today.getTime();
+              const todayStr = today.toISOString().slice(0, 10);
+              // Pre-compute cumulative target date per stage so we can show running totals
+              let cum = 0;
+              const stageRows = stages.map((stage, idx) => {
+                const weeks = Number(plan[stage] ?? 0);
+                const safeWeeks = Number.isFinite(weeks) && weeks > 0 ? weeks : 0;
+                cum += safeWeeks;
+                const targetMs = Number.isFinite(startMs) && safeWeeks > 0
+                  ? startMs + cum * 7 * 24 * 60 * 60 * 1000
+                  : NaN;
+                const targetDate = Number.isFinite(targetMs) ? new Date(targetMs).toISOString().slice(0, 10) : '';
+                const isDone = currentStageIdx > idx;
+                let status: 'Done' | 'Overdue' | 'At Risk' | 'On Track' | '—' = '—';
+                if (isDone) status = 'Done';
+                else if (Number.isFinite(targetMs)) {
+                  if (targetDate < todayStr) status = 'Overdue';
+                  else {
+                    const daysUntil = Math.ceil((targetMs - todayMs) / (1000 * 60 * 60 * 24));
+                    if (daysUntil <= 14) status = 'At Risk';
+                    else status = 'On Track';
+                  }
+                }
+                return { stage, idx, weeks: safeWeeks, targetDate, status };
+              });
+              const hasAnyDuration = stageRows.some(r => r.weeks > 0);
+              const hasGeneratedMilestones = (milestones[lease.id] ?? []).some(m => m.label.startsWith('PM Stage: '));
+              return (
+                <div key={lease.id} className="border border-border rounded-md overflow-hidden" data-testid={`pm-plan-${lease.id}`}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedPlanIds(prev => ({ ...prev, [lease.id]: !prev[lease.id] }))}
+                    className="w-full flex items-center gap-3 px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                    data-testid={`pm-plan-toggle-${lease.id}`}
+                  >
+                    {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+                    <span className="text-xs font-semibold flex-1 truncate">{lease.tenant}</span>
+                    <span className="text-[10px] text-muted-foreground hidden sm:inline">Lease start: <span className="tabular-nums font-medium text-foreground">{lease.leaseStart ? fmtDateShort(lease.leaseStart) : '—'}</span></span>
+                    {hasGeneratedMilestones && <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400">Plan Active</Badge>}
+                  </button>
+                  {isOpen && (
+                    <div className="p-3 space-y-2 bg-card">
+                      {!lease.leaseStart && (
+                        <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-2 py-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5" /> Set a lease start date on the Leases tab to compute target dates.
+                        </div>
+                      )}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border">
+                              <th className="py-1.5 pr-2 font-semibold">Stage</th>
+                              <th className="py-1.5 pr-2 font-semibold w-24">Weeks</th>
+                              <th className="py-1.5 pr-2 font-semibold w-32">Target Date</th>
+                              <th className="py-1.5 pr-2 font-semibold w-24">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {stageRows.map(row => (
+                              <tr key={row.stage} className="border-b border-border/40 last:border-0">
+                                <td className="py-1.5 pr-2 font-medium">{row.stage}</td>
+                                <td className="py-1.5 pr-2">
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    step={1}
+                                    value={row.weeks || ''}
+                                    placeholder="0"
+                                    onChange={e => onSetPMStageDuration(lease.id, row.stage, Number(e.target.value) || 0)}
+                                    className="h-7 w-20 text-xs tabular-nums"
+                                    disabled={readOnly}
+                                    data-testid={`pm-plan-weeks-${lease.id}-${row.idx}`}
+                                  />
+                                </td>
+                                <td className="py-1.5 pr-2 tabular-nums text-muted-foreground">{row.targetDate ? fmtDateShort(row.targetDate) : '—'}</td>
+                                <td className="py-1.5 pr-2">
+                                  {row.status === 'Done' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">Done</Badge>}
+                                  {row.status === 'Overdue' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0">Overdue</Badge>}
+                                  {row.status === 'At Risk' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-0">At Risk</Badge>}
+                                  {row.status === 'On Track' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0">On Track</Badge>}
+                                  {row.status === '—' && <span className="text-muted-foreground text-[10px]">—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="flex items-center gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={readOnly || !lease.leaseStart || !hasAnyDuration}
+                          onClick={() => onApplyPMStagePlan(lease.id)}
+                          data-testid={`pm-plan-apply-${lease.id}`}
+                        >
+                          <Save className="w-3 h-3 mr-1" /> Save &amp; Generate Milestones
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground">Generates one milestone per stage with a duration. Re-applying replaces existing PM Stage milestones.</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Lease expiration bar chart */}
       <div className="bg-card border border-border rounded-lg p-4">
@@ -6154,6 +6297,9 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [mappingTemplates, setMappingTemplates] = useState<MappingTemplate[]>([]);
   const { globalLogo: dashboardLogo, setGlobalLogo: setDashboardLogo } = useBranding();
   const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
+  // PM stage durations (weeks) per lease, keyed by stage label. Used to auto-generate
+  // milestone dates from lease.leaseStart for Project Management strategy leases.
+  const [pmStagePlans, setPMStagePlans] = usePersistedState<Record<number, Record<string, number>>>('cre_pm_stage_plans', {});
   // Editable Critical Items notes per lease (PM + Decommission tabs). Plain text keyed by lease id.
   const [criticalItems, setCriticalItems] = usePersistedState<Record<number, string>>('cre_critical_items', {});
   // Real Estate Decommission Check List + Surrender Requirements + Services to Terminate, keyed by lease id.
@@ -6195,6 +6341,47 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         ...prev,
         [leaseId]: existing.map(m => m.id === milestoneId ? { ...m, completed: !(m.completed === true) } : m),
       };
+    });
+  };
+
+  const setPMStageDuration = (leaseId: number, stageName: string, weeks: number) => {
+    setPMStagePlans(prev => {
+      const existing = prev[leaseId] ?? {};
+      // Clamp to non-negative integer weeks; allow 0 to mean "no duration".
+      const safeWeeks = Number.isFinite(weeks) && weeks >= 0 ? Math.round(weeks) : 0;
+      return { ...prev, [leaseId]: { ...existing, [stageName]: safeWeeks } };
+    });
+  };
+
+  // Generate milestones from cumulative stage durations starting at lease.leaseStart.
+  // Replaces any existing milestones whose label starts with the PM_STAGE_LABEL_PREFIX
+  // so plans can be regenerated atomically without erasing manual milestones.
+  const PM_STAGE_LABEL_PREFIX = 'PM Stage: ';
+  const applyPMStagePlan = (leaseId: number) => {
+    const lease = leasesData.find(l => l.id === leaseId);
+    if (!lease || !lease.leaseStart) return;
+    const stages = (STRATEGY_STAGES['Project Management'] ?? []).filter(s => s !== '—');
+    const plan = pmStagePlans[leaseId] ?? {};
+    // Cumulative weeks → target date per stage
+    const startMs = new Date(lease.leaseStart).getTime();
+    if (!Number.isFinite(startMs)) return;
+    let cumWeeks = 0;
+    const generated: Milestone[] = [];
+    let idCounter = Date.now();
+    stages.forEach(stage => {
+      const weeks = Number(plan[stage] ?? 0);
+      cumWeeks += Number.isFinite(weeks) && weeks > 0 ? weeks : 0;
+      // Only emit a milestone for stages that have a duration set
+      if (!Number.isFinite(weeks) || weeks <= 0) return;
+      const targetMs = startMs + cumWeeks * 7 * 24 * 60 * 60 * 1000;
+      const targetDate = new Date(targetMs).toISOString().slice(0, 10);
+      generated.push({ id: idCounter++, label: `${PM_STAGE_LABEL_PREFIX}${stage}`, date: targetDate, completed: false });
+    });
+    setMilestones(prev => {
+      const existing = prev[leaseId] ?? [];
+      // Keep manual milestones (those without the PM_STAGE_LABEL_PREFIX)
+      const preserved = existing.filter(m => !m.label.startsWith(PM_STAGE_LABEL_PREFIX));
+      return { ...prev, [leaseId]: [...preserved, ...generated] };
     });
   };
 
@@ -6575,7 +6762,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
 
         <TabsContent value="roadmap" className="mt-4">
-          <RoadmapModule allLeases={leasesData} notes={notes} onViewProfile={setProfileId} manualDates={manualDates} onSetManualDate={setManualDate} milestones={milestones} clientLogos={clientLogos} dashboardLogo={dashboardLogo} portfolioName={portfolioName} readOnly={readOnly} />
+          <RoadmapModule allLeases={leasesData} notes={notes} onViewProfile={setProfileId} manualDates={manualDates} onSetManualDate={setManualDate} milestones={milestones} pmStagePlans={pmStagePlans} onSetPMStageDuration={setPMStageDuration} onApplyPMStagePlan={applyPMStagePlan} clientLogos={clientLogos} dashboardLogo={dashboardLogo} portfolioName={portfolioName} readOnly={readOnly} />
         </TabsContent>
 
         <TabsContent value="qbr" className="mt-4">
