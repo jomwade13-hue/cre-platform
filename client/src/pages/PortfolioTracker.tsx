@@ -3708,15 +3708,19 @@ function ExportImageButton({ targetId, label }: { targetId: string; label: strin
 
 // ── QBR Module ───────────────────────────────────────────────────────────────
 
-function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, readOnly }: {
+function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry, onRemoveQBREntry, onViewProfile, readOnly }: {
   leases: LeaseRecord[];
   qbrEntries: QBREntry[];
   notes: Record<number, LeaseNote[]>;
   onAddQBREntry: (entry: Omit<QBREntry, 'id'>) => void;
+  onUpdateQBREntry: (id: number, updates: Partial<Omit<QBREntry, 'id'>>) => void;
+  onRemoveQBREntry: (id: number) => void;
   onViewProfile: (id: number) => void;
   readOnly?: boolean;
 }) {
   const [showLogForm, setShowLogForm] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
   const [logLeaseId, setLogLeaseId]     = useState('');
   const [logSummary, setLogSummary]     = useState('');
   const [logNewRent, setLogNewRent]     = useState('');
@@ -3726,6 +3730,34 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
   const [logVALabel, setLogVALabel]   = useState('');
   const [logVAAmount, setLogVAAmount] = useState('');
   const [logVACat, setLogVACat]       = useState<'monetary' | 'non-monetary'>('monetary');
+
+  const resetLogForm = () => {
+    setShowLogForm(false);
+    setEditingEntryId(null);
+    setLogLeaseId('');
+    setLogSummary('');
+    setLogNewRent('');
+    setLogServices([]);
+    setLogValueAddItems([]);
+    setLogVALabel(''); setLogVAAmount(''); setLogVACat('monetary');
+    setLogQBRYear(String(new Date().getFullYear()));
+  };
+
+  const startEditEntry = (entry: QBREntry) => {
+    setEditingEntryId(entry.id);
+    setShowLogForm(true);
+    setLogLeaseId(String(entry.leaseId));
+    setLogSummary(entry.summary);
+    setLogNewRent(String(entry.newRent || ''));
+    setLogServices([...entry.servicesProvided]);
+    setLogValueAddItems([...(entry.valueAddItems ?? [])]);
+    setLogQBRYear(String(entry.qbrYear));
+    setLogVALabel(''); setLogVAAmount(''); setLogVACat('monetary');
+    // Scroll the form into view
+    setTimeout(() => {
+      document.getElementById('qbr-log-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  };
 
   // Year filter for QBR entries
   const [qbrYearFilter, setQbrYearFilter] = useState<string>('all');
@@ -3756,33 +3788,39 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
   }).filter(l => !qbrEntries.some(e => e.leaseId === l.id));
 
   const selectedLease = leases.find(l => l.id === Number(logLeaseId));
+  const editingEntry = editingEntryId !== null ? qbrEntries.find(e => e.id === editingEntryId) : null;
 
   const handleLogSubmit = () => {
-    if (!selectedLease) return;
     const newRentVal = Number(logNewRent) || 0;
-    onAddQBREntry({
-      leaseId: selectedLease.id,
-      tenant: selectedLease.tenant,
-      property: selectedLease.property,
-      completedDate: new Date().toISOString().slice(0, 10),
-      strategy: selectedLease.strategy,
-      sqft: selectedLease.sqft,
-      originalRent: selectedLease.totalRent,
-      newRent: newRentVal,
-      savings: selectedLease.totalRent - newRentVal,
-      valueAddItems: logValueAddItems,
-      servicesProvided: logServices,
-      summary: logSummary,
-      qbrYear: parseInt(logQBRYear, 10),
-    });
-    setShowLogForm(false);
-    setLogLeaseId('');
-    setLogSummary('');
-    setLogNewRent('');
-    setLogServices([]);
-    setLogValueAddItems([]);
-    setLogVALabel(''); setLogVAAmount(''); setLogVACat('monetary');
-    setLogQBRYear(String(new Date().getFullYear()));
+    if (editingEntryId !== null && editingEntry) {
+      // Edit existing entry — preserve lease binding, update editable fields
+      onUpdateQBREntry(editingEntryId, {
+        newRent: newRentVal,
+        savings: editingEntry.originalRent - newRentVal,
+        valueAddItems: logValueAddItems,
+        servicesProvided: logServices,
+        summary: logSummary,
+        qbrYear: parseInt(logQBRYear, 10),
+      });
+    } else {
+      if (!selectedLease) return;
+      onAddQBREntry({
+        leaseId: selectedLease.id,
+        tenant: selectedLease.tenant,
+        property: selectedLease.property,
+        completedDate: new Date().toISOString().slice(0, 10),
+        strategy: selectedLease.strategy,
+        sqft: selectedLease.sqft,
+        originalRent: selectedLease.totalRent,
+        newRent: newRentVal,
+        savings: selectedLease.totalRent - newRentVal,
+        valueAddItems: logValueAddItems,
+        servicesProvided: logServices,
+        summary: logSummary,
+        qbrYear: parseInt(logQBRYear, 10),
+      });
+    }
+    resetLogForm();
   };
 
   const metrics = [
@@ -3889,22 +3927,33 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
 
         {/* Log completion form */}
         {showLogForm && (
-          <div className="mb-4 p-4 border border-border rounded-lg bg-muted/20 space-y-3">
-            <h4 className="text-sm font-semibold">Log Completed Location</h4>
+          <div id="qbr-log-form" className="mb-4 p-4 border border-border rounded-lg bg-muted/20 space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold">{editingEntryId !== null ? 'Edit QBR Report Entry' : 'Log Completed Location'}</h4>
+              {editingEntryId !== null && (
+                <Badge variant="outline" className="text-[10px]">Editing</Badge>
+              )}
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Location</label>
-                <Select value={logLeaseId} onValueChange={setLogLeaseId}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select location…" /></SelectTrigger>
-                  <SelectContent>
-                    {logCandidates.map(l => (
-                      <SelectItem key={l.id} value={String(l.id)} className="text-xs">{l.tenant} — {l.property}</SelectItem>
-                    ))}
-                    {logCandidates.length === 0 && (
-                      <SelectItem value="none" disabled className="text-xs">No eligible locations</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
+                {editingEntryId !== null && editingEntry ? (
+                  <div className="h-8 px-2 flex items-center text-xs bg-muted/40 rounded border border-border truncate" title={`${editingEntry.tenant} — ${editingEntry.property}`}>
+                    {editingEntry.tenant} — {editingEntry.property}
+                  </div>
+                ) : (
+                  <Select value={logLeaseId} onValueChange={setLogLeaseId}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select location…" /></SelectTrigger>
+                    <SelectContent>
+                      {logCandidates.map(l => (
+                        <SelectItem key={l.id} value={String(l.id)} className="text-xs">{l.tenant} — {l.property}</SelectItem>
+                      ))}
+                      {logCandidates.length === 0 && (
+                        <SelectItem value="none" disabled className="text-xs">No eligible locations</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">QBR Year</label>
@@ -3922,14 +3971,14 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
                 <Input type="number" placeholder="0" value={logNewRent} onChange={e => setLogNewRent(e.target.value)} className="h-8 text-xs" />
               </div>
             </div>
-            {selectedLease && (
+            {(selectedLease || editingEntry) && (
               <div className="flex flex-wrap gap-1.5 text-xs">
                 <span className="text-muted-foreground">Original rent:</span>
-                <span className="font-medium">{fmt(selectedLease.totalRent)}</span>
+                <span className="font-medium">{fmt(editingEntry ? editingEntry.originalRent : selectedLease!.totalRent)}</span>
                 <span className="text-muted-foreground ml-2">SF:</span>
-                <span className="font-medium">{fmtSqft(selectedLease.sqft)}</span>
+                <span className="font-medium">{fmtSqft(editingEntry ? editingEntry.sqft : selectedLease!.sqft)}</span>
                 <span className="text-muted-foreground ml-2">Strategy:</span>
-                <span className="font-medium">{selectedLease.strategy}</span>
+                <span className="font-medium">{editingEntry ? editingEntry.strategy : selectedLease!.strategy}</span>
               </div>
             )}
             <div>
@@ -3996,8 +4045,10 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
                 value={logSummary} onChange={e => setLogSummary(e.target.value)} className="text-sm min-h-[60px]" />
             </div>
             <div className="flex gap-2">
-              <Button size="sm" className="h-8 text-xs" disabled={!logLeaseId || !logSummary.trim()} onClick={handleLogSubmit}>Log Completion</Button>
-              <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => { setShowLogForm(false); setLogLeaseId(''); setLogSummary(''); setLogNewRent(''); setLogServices([]); setLogValueAddItems([]); }}>Cancel</Button>
+              <Button size="sm" className="h-8 text-xs" disabled={!logLeaseId || !logSummary.trim()} onClick={handleLogSubmit}>
+                {editingEntryId !== null ? 'Save Changes' : 'Log Completion'}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={resetLogForm}>Cancel</Button>
             </div>
           </div>
         )}
@@ -4023,11 +4074,31 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
                     </div>
                     <p className="text-xs text-muted-foreground">{entry.property} · Completed {entry.completedDate}</p>
                   </div>
-                  <button onClick={() => onViewProfile(entry.leaseId)}
-                    className="w-6 h-6 rounded hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                    title="View location">
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {!readOnly && (
+                      <>
+                        <button
+                          onClick={() => startEditEntry(entry)}
+                          data-testid={`qbr-edit-${entry.id}`}
+                          className="w-6 h-6 rounded hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-primary transition-colors"
+                          title="Edit QBR entry">
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteConfirmId(entry.id)}
+                          data-testid={`qbr-delete-${entry.id}`}
+                          className="w-6 h-6 rounded hover:bg-destructive/10 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                          title="Delete QBR entry">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                    <button onClick={() => onViewProfile(entry.leaseId)}
+                      className="w-6 h-6 rounded hover:bg-muted flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                      title="View location">
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 <p className="text-xs leading-relaxed mb-3">{entry.summary}</p>
@@ -4159,6 +4230,45 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onViewProfile, re
           ))}
         </div>
       </div>
+
+      {/* Delete confirmation dialog */}
+      {deleteConfirmId !== null && (() => {
+        const target = qbrEntries.find(e => e.id === deleteConfirmId);
+        if (!target) return null;
+        return (
+          <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4"
+               onClick={() => setDeleteConfirmId(null)}>
+            <div className="bg-card border border-border rounded-lg shadow-2xl max-w-md w-full p-5"
+                 onClick={e => e.stopPropagation()}>
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-9 h-9 rounded-full bg-destructive/10 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-4 h-4 text-destructive" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold">Delete QBR Report Entry?</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Remove <span className="font-medium text-foreground">{target.tenant}</span> — <span className="text-foreground">{target.property}</span> ({target.qbrYear}) from the QBR completed locations log. This cannot be undone.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 mt-4">
+                <Button size="sm" variant="ghost" className="h-8 text-xs"
+                        onClick={() => setDeleteConfirmId(null)}>Cancel</Button>
+                <Button size="sm" variant="destructive" className="h-8 text-xs"
+                        data-testid={`qbr-delete-confirm-${target.id}`}
+                        onClick={() => {
+                          onRemoveQBREntry(target.id);
+                          setDeleteConfirmId(null);
+                          // If we were editing the same entry, close the form
+                          if (editingEntryId === target.id) resetLogForm();
+                        }}>
+                  <Trash2 className="w-3 h-3 mr-1" />Delete
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -6130,6 +6240,14 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     setQbrEntries(prev => [...prev, { ...entry, id: Date.now() }]);
   };
 
+  const updateQBREntry = (id: number, updates: Partial<Omit<QBREntry, 'id'>>) => {
+    setQbrEntries(prev => prev.map(e => (e.id === id ? { ...e, ...updates } : e)));
+  };
+
+  const removeQBREntry = (id: number) => {
+    setQbrEntries(prev => prev.filter(e => e.id !== id));
+  };
+
   const setManualDate = (leaseId: number, date: string) => {
     setManualDates(prev => {
       const next = { ...prev };
@@ -6461,7 +6579,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
 
         <TabsContent value="qbr" className="mt-4">
-          <QBRModule leases={leasesData} qbrEntries={qbrEntries} notes={notes} onAddQBREntry={addQBREntry} onViewProfile={setProfileId} readOnly={readOnly} />
+          <QBRModule leases={leasesData} qbrEntries={qbrEntries} notes={notes} onAddQBREntry={addQBREntry} onUpdateQBREntry={updateQBREntry} onRemoveQBREntry={removeQBREntry} onViewProfile={setProfileId} readOnly={readOnly} />
         </TabsContent>
       </Tabs>
     </div>
