@@ -82,6 +82,10 @@ const STATUS_STYLES: Record<string, string> = {
   'Archive':            'bg-slate-100 text-slate-500 dark:bg-slate-900/30 dark:text-slate-500',
 };
 
+type QBRPriority = 'Critical' | 'High' | 'Medium';
+interface QBRPriorityItem { id: string; priority: QBRPriority; action: string; owner: string; }
+const QBR_PRIORITIES: QBRPriority[] = ['Critical', 'High', 'Medium'];
+
 const PRIORITY_STYLES: Record<string, string> = {
   'Critical': 'bg-red-100    text-red-800    dark:bg-red-900/30    dark:text-red-400',
   'High':     'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
@@ -1567,6 +1571,10 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
   const totalRent   = filtered.reduce((s, l) => s + l.totalRent, 0);
   const activeCount = filtered.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition').length;
 
+  // Portfolio-wide totals ignore search/status/type/lead filters.
+  const portfolioLeaseCount = data.length;
+  const portfolioTotalSqft  = data.reduce((s, l) => s + l.sqft, 0);
+
   const toggleSort = (col: string) =>
     setSort(s => s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' });
 
@@ -1628,9 +1636,9 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     <div className="space-y-4">
       {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <KPICard label="Total Leases"    value={String(filtered.length)}           delta={5}   deltaLabel="vs last yr"   icon={<Database className="w-4 h-4" />} accent="blue" />
+        <KPICard label="Total Leases"    value={String(portfolioLeaseCount)}       delta={5}   deltaLabel="vs last yr"   icon={<Database className="w-4 h-4" />} accent="blue" />
         <KPICard label="Active"          value={String(activeCount)}                                                      icon={<CheckCircle2 className="w-4 h-4" />} accent="green" />
-        <KPICard label="Total SF"        value={fmtSqft(totalSqft)}                delta={3.2} deltaLabel="YoY"           icon={<Building2 className="w-4 h-4" />} accent="purple" />
+        <KPICard label="Total SF"        value={fmtSqft(portfolioTotalSqft)}       delta={3.2} deltaLabel="YoY"           icon={<Building2 className="w-4 h-4" />} accent="purple" />
         <KPICard label="Avg Rent PSF"    value={filtered.length ? `$${(filtered.reduce((s,l)=>s+l.rentPSF,0)/filtered.length).toFixed(2)}` : '—'} delta={4.1} deltaLabel="YoY" icon={<ArrowUpRight className="w-4 h-4" />} accent="amber" />
         <KPICard label="Annual Rent"     value={fmt(totalRent)}                    delta={7.8} deltaLabel="YoY"           icon={<FileBarChart className="w-4 h-4" />} accent="blue" />
       </div>
@@ -3884,7 +3892,7 @@ function ExportImageButton({ targetId, label }: { targetId: string; label: strin
 
 // ── QBR Module ───────────────────────────────────────────────────────────────
 
-function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry, onRemoveQBREntry, onViewProfile, readOnly }: {
+function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry, onRemoveQBREntry, onViewProfile, actionItems, onSetActionItems, readOnly }: {
   leases: LeaseRecord[];
   qbrEntries: QBREntry[];
   notes: Record<number, LeaseNote[]>;
@@ -3892,6 +3900,8 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry,
   onUpdateQBREntry: (id: number, updates: Partial<Omit<QBREntry, 'id'>>) => void;
   onRemoveQBREntry: (id: number) => void;
   onViewProfile: (id: number) => void;
+  actionItems: QBRPriorityItem[];
+  onSetActionItems: React.Dispatch<React.SetStateAction<QBRPriorityItem[]>>;
   readOnly?: boolean;
 }) {
   const [showLogForm, setShowLogForm] = useState(false);
@@ -3944,6 +3954,14 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry,
   const filteredEntries = qbrYearFilter === 'all' ? qbrEntries : qbrEntries.filter(e => e.qbrYear === Number(qbrYearFilter));
 
   const quarter = 'Q1 2026';
+
+  const addActionItem = () =>
+    onSetActionItems(prev => [...prev, { id: crypto.randomUUID(), priority: 'Medium', action: '', owner: '' }]);
+  const updateActionItem = (id: string, patch: Partial<QBRPriorityItem>) =>
+    onSetActionItems(prev => prev.map(a => (a.id === id ? { ...a, ...patch } : a)));
+  const removeActionItem = (id: string) =>
+    onSetActionItems(prev => prev.filter(a => a.id !== id));
+
   const totalSqft = leases.reduce((s, l) => s + l.sqft, 0);
   const totalRent = leases.reduce((s, l) => s + l.totalRent, 0);
   const avgPSF    = leases.length ? leases.reduce((s,l)=>s+l.rentPSF,0)/leases.length : 0;
@@ -4389,21 +4407,46 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry,
 
       {/* Priority Action Items */}
       <div className="bg-card border border-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold mb-3">Priority Action Items — {quarter}</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold">Priority Action Items — {quarter}</h3>
+          {!readOnly && (
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={addActionItem}>
+              <Plus className="w-3 h-3" />Add Action Item
+            </Button>
+          )}
+        </div>
         <div className="space-y-2">
-          {[
-            { priority: 'Critical', action: 'Execute PwC relocation — LOI signed, lease negotiations in progress', owner: 'Travis Hilty' },
-            { priority: 'Critical', action: 'Submit counterproposal on United Airlines Willis Tower renewal at $43 PSF', owner: 'Travis Hilty' },
-            { priority: 'High',     action: 'Finalize Bank of America sublease marketing — 2 tours scheduled', owner: 'Alisha Shields' },
-            { priority: 'High',     action: 'Complete NCR construction punch list review by August 2026', owner: 'Matt Epperson' },
-            { priority: 'Medium',   action: 'Initiate Cox Perimeter renewal restructure negotiations', owner: 'Alisha Shields' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-start gap-3 py-2 border-b border-border last:border-0">
-              <Badge className={cn('text-xs border-0 shrink-0 mt-0.5', PRIORITY_STYLES[item.priority])}>{item.priority}</Badge>
-              <p className="text-sm flex-1">{item.action}</p>
-              <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{item.owner}</span>
-            </div>
-          ))}
+          {actionItems.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-2">No action items yet. Add priority items for next quarter.</p>
+          ) : (
+            actionItems.map(item => (
+              <div key={item.id} className="flex items-start gap-3 py-2 border-b border-border last:border-0">
+                {readOnly ? (
+                  <Badge className={cn('text-xs border-0 shrink-0 mt-0.5', PRIORITY_STYLES[item.priority])}>{item.priority}</Badge>
+                ) : (
+                  <Select value={item.priority} onValueChange={v => updateActionItem(item.id, { priority: v as QBRPriority })}>
+                    <SelectTrigger className="h-8 w-28 text-xs shrink-0"><SelectValue /></SelectTrigger>
+                    <SelectContent>{QBR_PRIORITIES.map(p => <SelectItem key={p} value={p} className="text-xs">{p}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}
+                {readOnly ? (
+                  <p className="text-sm flex-1">{item.action}</p>
+                ) : (
+                  <Input value={item.action} onChange={e => updateActionItem(item.id, { action: e.target.value })} placeholder="Action item" className="h-8 text-sm flex-1" />
+                )}
+                {readOnly ? (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{item.owner}</span>
+                ) : (
+                  <Input value={item.owner} onChange={e => updateActionItem(item.id, { owner: e.target.value })} placeholder="Owner" className="h-8 w-40 text-xs shrink-0" />
+                )}
+                {!readOnly && (
+                  <Button size="sm" variant="ghost" className="h-8 w-7 p-0 shrink-0" onClick={() => removeActionItem(item.id)}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -6294,10 +6337,11 @@ const EMPTY_METRICS: QBRMetricInput = {
   renewalRatePct: '', retentionRatePct: '', collectionsRatePct: '', arrears: '', turnoverPct: '',
 };
 
-function QBRReportModal({ leases, notes, portfolioName, onClose }: {
+function QBRReportModal({ leases, notes, portfolioName, priorityItems, onClose }: {
   leases: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   portfolioName: string;
+  priorityItems: QBRPriorityItem[];
   onClose: () => void;
 }) {
   const init = currentQuarter();
@@ -6309,21 +6353,19 @@ function QBRReportModal({ leases, notes, portfolioName, onClose }: {
   const [opportunities, setOpportunities] = useState('');
   const [busy, setBusy] = useState<null | 'pdf' | 'pptx'>(null);
 
-  // Prepopulate action items from open initiatives (active, non-archive leases).
+  // Seed the export's Action Plan from the user's on-screen Priority Action Items
+  // (persisted as `cre_qbr_action_items`). Falls back to a single blank row when
+  // none have been entered, so the exported report shows "No action items recorded."
   const [actionItems, setActionItems] = useState<QBRActionItem[]>(() => {
-    const active = leases
-      .filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition')
-      .sort((a, b) => (a.leaseEnd < b.leaseEnd ? -1 : 1))
-      .slice(0, 6);
-    if (active.length === 0) {
+    if (priorityItems.length === 0) {
       return [{ id: Date.now(), item: '', owner: '', targetDate: '', status: 'Not Started' }];
     }
-    return active.map((l, i) => ({
-      id: l.id * 1000 + i,
-      item: `${l.strategy} — ${l.tenant} (${l.property})`,
-      owner: l.clientLead || '',
-      targetDate: l.leaseEnd || '',
-      status: 'In Progress',
+    return priorityItems.map((p, i) => ({
+      id: i + 1,
+      item: p.action,
+      owner: p.owner,
+      targetDate: '',
+      status: p.priority,
     }));
   });
 
@@ -6510,6 +6552,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [documents, setDocuments] = useIDBSplitRecordState<LeaseDocument[]>('cre_lease_documents', initialLeaseDocuments as unknown as Record<string, LeaseDocument[]>) as unknown as [Record<number, LeaseDocument[]>, React.Dispatch<React.SetStateAction<Record<number, LeaseDocument[]>>>];
   const [photos,    setPhotos]    = useIDBSplitRecordState<LeasePhoto[]>('cre_lease_photos', PLACEHOLDER_PHOTOS as unknown as Record<string, LeasePhoto[]>) as unknown as [Record<number, LeasePhoto[]>, React.Dispatch<React.SetStateAction<Record<number, LeasePhoto[]>>>];
   const [qbrEntries, setQbrEntries] = usePersistedState<QBREntry[]>('cre_qbr_entries', INITIAL_QBR_ENTRIES);
+  const [qbrActionItems, setQbrActionItems] = usePersistedState<QBRPriorityItem[]>('cre_qbr_action_items', []);
   const [manualDates, setManualDates] = usePersistedState<Record<number, string>>('cre_manual_dates', {});
   const [profileId,   setProfileId]   = useState<number | null>(null);
   const [slideDeckOpen, setSlideDeckOpen] = useState(false);
@@ -6808,6 +6851,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           leases={leasesData}
           notes={notes}
           portfolioName={portfolioName}
+          priorityItems={qbrActionItems}
           onClose={() => setQbrReportOpen(false)}
         />
       )}
@@ -7015,7 +7059,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
 
         <TabsContent value="qbr" className="mt-4">
-          <QBRModule leases={leasesData} qbrEntries={qbrEntries} notes={notes} onAddQBREntry={addQBREntry} onUpdateQBREntry={updateQBREntry} onRemoveQBREntry={removeQBREntry} onViewProfile={setProfileId} readOnly={readOnly} />
+          <QBRModule leases={leasesData} qbrEntries={qbrEntries} notes={notes} onAddQBREntry={addQBREntry} onUpdateQBREntry={updateQBREntry} onRemoveQBREntry={removeQBREntry} onViewProfile={setProfileId} actionItems={qbrActionItems} onSetActionItems={setQbrActionItems} readOnly={readOnly} />
         </TabsContent>
       </Tabs>
     </div>

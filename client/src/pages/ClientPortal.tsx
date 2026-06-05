@@ -2,7 +2,9 @@ import { useState, useMemo } from 'react';
 import {
   Building2, Plus, ChevronRight, Briefcase, MapPin, Clock,
   LogOut, Settings, Upload, X, Crown, Edit3, Eye, Sun, Moon, History, Shield,
+  Database,
 } from 'lucide-react';
+import { leases as leasesInit } from '@/data/mock';
 import { useTheme } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -112,6 +114,26 @@ export default function ClientPortal({ session, onSelectPortfolio, onLogout, onO
       window.location.reload();
     },
   });
+
+  // Portfolio-wide lease totals. Reads the same persisted `cre_leases` source the
+  // Property Database uses (falling back to the seed dataset) so the home cards
+  // stay in sync with the Property Database's full-portfolio Total Leases / Total SF.
+  const { leaseCount, totalSqft } = useMemo(() => {
+    let src: Array<{ sqft: number }> = leasesInit as Array<{ sqft: number }>;
+    try {
+      const raw = typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage.getItem('cre_leases') : null;
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) src = parsed;
+      }
+    } catch { /* fall back to seed */ }
+    return {
+      leaseCount: src.length,
+      totalSqft: src.reduce((s, l) => s + (Number(l.sqft) || 0), 0),
+    };
+  }, []);
+  const fmtSqft = (n: number) => `${new Intl.NumberFormat('en-US').format(n)} SF`;
 
   const filtered = portfolios.filter((p) => {
     const q = search.toLowerCase();
@@ -309,6 +331,19 @@ export default function ClientPortal({ session, onSelectPortfolio, onLogout, onO
                   <div className="flex items-center gap-1.5">
                     <Clock className="w-3 h-3 text-slate-400 dark:text-white/25" />
                     <span className="text-xs text-slate-600 dark:text-white/50">Active</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-slate-100 dark:border-white/[0.06]">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Database className="w-3 h-3 text-slate-400 dark:text-white/25 shrink-0" />
+                    <span className="text-xs text-slate-500 dark:text-white/40">Total Leases</span>
+                    <span className="text-xs font-semibold text-slate-700 dark:text-white/70 ml-auto">{leaseCount.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Building2 className="w-3 h-3 text-slate-400 dark:text-white/25 shrink-0" />
+                    <span className="text-xs text-slate-500 dark:text-white/40">Total SF</span>
+                    <span className="text-xs font-semibold text-slate-700 dark:text-white/70 ml-auto truncate">{fmtSqft(totalSqft)}</span>
                   </div>
                 </div>
               </button>
