@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { BRAND, BRAND_FONTS, BRAND_FONT_LINKS } from '@/lib/brand';
+import { TranswesternLogo } from '@/components/TranswesternLogo';
 
 /* ─────────────────────────── Types ─────────────────────────── */
 
@@ -612,14 +614,27 @@ function PrintChecklistsModal({
   // inside a position:fixed wrapper with overflow-y:auto, both of which can
   // suppress page breaks during print if not reset.
   useEffect(() => {
+    // Load brand fonts (Playfair Display + Inter) for the printed checklist.
+    const fontId = 'decom-brand-fonts';
+    if (!document.getElementById(fontId)) {
+      const holder = document.createElement('div');
+      holder.id = fontId;
+      holder.style.display = 'none';
+      holder.innerHTML = BRAND_FONT_LINKS;
+      // Move the <link> tags into <head> so the popup-less print picks them up.
+      Array.from(holder.querySelectorAll('link')).forEach(l => document.head.appendChild(l));
+    }
     const id = 'decom-print-style';
     const existing = document.getElementById(id);
     if (existing) existing.remove();
     const style = document.createElement('style');
     style.id = id;
     style.innerHTML = `
+      #decom-print-root, #decom-print-root .tw-body { font-family:${BRAND_FONTS.sans}; }
+      #decom-print-root .tw-serif { font-family:${BRAND_FONTS.serif}; color:${BRAND.navy}; }
       @media print {
         @page { margin: 0.5in; size: letter; }
+        #decom-print-root { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 
         html, body {
           background: #ffffff !important;
@@ -706,23 +721,22 @@ function PrintChecklistsModal({
           </div>
         </div>
 
-        <div id="decom-print-root" className="p-8 font-sans text-[12px]">
+        <div id="decom-print-root" className="tw-body p-8 text-[12px]">
           {/* Report header — only shown when printing the whole set; for a
               single-lease print we go straight into the lease page so the
               output is a single tidy page. */}
           {!singleMode && (
             <div className="decom-print-page">
-              <div className="border-b-2 border-red-600 pb-3 mb-6 flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  {dashboardLogo
-                    ? <img src={dashboardLogo} alt={portfolioName} style={{ height: 32, maxWidth: 160, objectFit: 'contain' }} />
-                    : <div className="w-8 h-8 rounded bg-red-600" />}
-                  <div>
-                    <div className="text-[16px] font-bold">{portfolioName}</div>
-                    <div className="text-[18px] font-bold mt-1">Decommission Checklists</div>
-                    <div className="text-[10px] text-gray-500">Prepared {reportDate} · {leases.length} {leases.length === 1 ? 'location' : 'locations'}</div>
-                  </div>
+              <div className="pb-3 mb-6 flex items-start justify-between" style={{ borderBottom: `2px solid ${BRAND.blue}` }}>
+                <div>
+                  <TranswesternLogo size={30} wordmark />
+                  <div className="text-[10px] font-bold uppercase tracking-[0.12em] mt-3" style={{ color: BRAND.blue }}>{portfolioName}</div>
+                  <div className="tw-serif text-[20px] font-bold mt-0.5" style={{ color: BRAND.navy }}>Decommission Checklists</div>
+                  <div className="text-[10px]" style={{ color: BRAND.caption }}>Prepared {reportDate} · {leases.length} {leases.length === 1 ? 'location' : 'locations'}</div>
                 </div>
+                {dashboardLogo && (
+                  <img src={dashboardLogo} alt={portfolioName} style={{ height: 32, maxWidth: 160, objectFit: 'contain' }} />
+                )}
               </div>
             </div>
           )}
@@ -736,16 +750,15 @@ function PrintChecklistsModal({
               <div key={lease.id} className="decom-print-page" style={{ marginBottom: 32 }}>
                 {showRunningHeader && (
                   <div className="flex items-center gap-3 mb-4 pb-2 border-b border-gray-200">
-                    {dashboardLogo
-                      ? <img src={dashboardLogo} alt="" style={{ height: 20, maxWidth: 100, objectFit: 'contain' }} />
-                      : null}
-                    <div className="text-[10px] text-gray-500">{portfolioName} · Decommission Checklist · {reportDate}</div>
+                    <TranswesternLogo size={18} />
+                    <div className="text-[10px]" style={{ color: BRAND.caption }}>{portfolioName} · Decommission Checklist · {reportDate}</div>
+                    {dashboardLogo && <img src={dashboardLogo} alt="" style={{ height: 18, maxWidth: 90, objectFit: 'contain', marginLeft: 'auto' }} />}
                   </div>
                 )}
 
                 {/* Location header */}
                 <div className="border-l-4 border-red-600 pl-3 mb-4">
-                  <div className="text-[15px] font-bold">{lease.tenant} — {lease.property}</div>
+                  <div className="tw-serif text-[16px] font-bold" style={{ color: BRAND.navy }}>{lease.tenant} — {lease.property}</div>
                   <div className="text-[11px] text-gray-600">
                     {[lease.address, fmtSqft(lease.sqft)].filter(Boolean).join(' · ')}
                   </div>
@@ -852,8 +865,8 @@ function PrintChecklistsModal({
           })}
 
           {/* Footer */}
-          <div className="text-[9px] text-gray-400 pt-3 border-t text-center">
-            {portfolioName} — Confidential · {reportDate}
+          <div className="text-[9px] pt-3 border-t text-center" style={{ color: BRAND.caption }}>
+            © {new Date().getFullYear()} Transwestern&nbsp;&nbsp;|&nbsp;&nbsp;Confidential &amp; Proprietary · {reportDate}
           </div>
         </div>
       </div>

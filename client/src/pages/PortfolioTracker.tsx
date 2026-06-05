@@ -33,6 +33,12 @@ import {
   type LeaseNote, type LeaseDocument
 } from '@/data/mock';
 import { cn } from '@/lib/utils';
+import { BRAND, BRAND_FONTS, BRAND_FONT_LINKS, transwesternLogoSvg } from '@/lib/brand';
+import { TranswesternLogo } from '@/components/TranswesternLogo';
+import {
+  deriveQBR, openQBRPdf, downloadQBRPptx, QBR_PURPOSE,
+  type QBRLease, type QBRMetricInput, type QBRActionItem,
+} from '@/lib/qbr';
 import { useBranding } from '@/components/Layout';
 import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
 import { usePersistedState } from '@/lib/usePersistedState';
@@ -4500,15 +4506,16 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
   const coverLogo = Object.values(clientLogos).find(v => v) || '';
 
   const isDark = printMode === 'dark';
-  const bg = isDark ? '#1a1a2e' : '#ffffff';
-  const fg = isDark ? '#e0e0e0' : '#1a1a1a';
-  const fgMuted2 = isDark ? '#888888' : '#6b7280';
-  const border2 = isDark ? '#333355' : '#e5e7eb';
-  const cardBg2 = isDark ? '#16213e' : '#f9fafb';
-  const accent2 = isDark ? '#60a5fa' : '#2563eb';
-  const green2 = isDark ? '#4ade80' : '#16a34a';
-  const amber2 = isDark ? '#fbbf24' : '#d97706';
-  const red2 = isDark ? '#f87171' : '#dc2626';
+  // Light (default) = Transwestern daytime brand; Dark kept for on-screen preview only.
+  const bg = isDark ? '#1a1a2e' : BRAND.cream;
+  const fg = isDark ? '#e0e0e0' : BRAND.navy;
+  const fgMuted2 = isDark ? '#888888' : BRAND.caption;
+  const border2 = isDark ? '#333355' : BRAND.border;
+  const cardBg2 = isDark ? '#16213e' : BRAND.white;
+  const accent2 = isDark ? '#60a5fa' : BRAND.blue;
+  const green2 = isDark ? '#4ade80' : BRAND.green;
+  const amber2 = isDark ? '#fbbf24' : BRAND.amber;
+  const red2 = isDark ? '#f87171' : BRAND.red;
   const scoreColor = healthScore >= 85 ? green2 : healthScore >= 70 ? accent2 : healthScore >= 50 ? amber2 : red2;
 
   const generateHTML = () => {
@@ -4565,25 +4572,22 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${portfolioName} — Active Initiatives Snapshot</title>
+${isDark ? '' : BRAND_FONT_LINKS}
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:${bg}; color:${fg}; padding:0; margin:0; }
+  body { font-family:${isDark ? "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" : BRAND_FONTS.sans}; background:${bg}; color:${fg}; padding:0; margin:0; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  h1,h2,h3 { font-family:${isDark ? 'inherit' : BRAND_FONTS.serif}; }
   @media print { .cover-page { page-break-after:always; } body { padding:0; } }
   @media (max-width:640px) { .cover-page { padding:32px !important; min-height:auto !important; } }
 </style></head><body>
   <!-- COVER PAGE -->
-  <div class="cover-page" style="min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:64px 32px;background:${isDark ? 'linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0f172a 100%)' : 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 50%, #f1f5f9 100%)'}">
+  <div class="cover-page" style="min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:64px 32px;background:${isDark ? 'linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0f172a 100%)' : BRAND.cream}">
     ${coverLogoHTML}
-    <div style="margin-bottom:16px">
-      <svg viewBox="0 0 32 32" fill="none" width="40" height="40">
-        <rect width="32" height="32" rx="6" fill="${accent2}"/>
-        <rect x="7" y="18" width="4" height="8" fill="white"/>
-        <rect x="14" y="12" width="4" height="14" fill="white" opacity="0.85"/>
-        <rect x="21" y="6" width="4" height="20" fill="white" opacity="0.7"/>
-      </svg>
+    <div style="margin-bottom:20px">
+      ${transwesternLogoSvg({ size: 56, mono: isDark, onDark: isDark, wordmark: true })}
     </div>
-    <p style="font-size:11px;color:${fgMuted2};text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px">Transcend</p>
-    <h1 style="font-size:32px;font-weight:800;margin-bottom:6px;line-height:1.2">${portfolioName}</h1>
+    <p style="font-size:11px;color:${accent2};text-transform:uppercase;letter-spacing:0.14em;margin-bottom:10px;font-weight:700">Portfolio Report</p>
+    <h1 style="font-size:34px;font-weight:800;margin-bottom:6px;line-height:1.2;color:${fg}">${portfolioName}</h1>
     <p style="font-size:18px;font-weight:600;color:${accent2};margin-bottom:24px">Active Initiatives Snapshot</p>
     <div style="display:inline-flex;align-items:center;gap:8px;padding:8px 20px;border-radius:24px;background:${cardBg2};border:1px solid ${border2};margin-bottom:20px">
       <span style="font-size:22px;font-weight:800;color:${scoreColor}">${healthScore}</span>
@@ -4602,15 +4606,9 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
       <div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">
-          <svg viewBox="0 0 32 32" fill="none" width="28" height="28">
-            <rect width="32" height="32" rx="6" fill="${accent2}"/>
-            <rect x="7" y="18" width="4" height="8" fill="white"/>
-            <rect x="14" y="12" width="4" height="14" fill="white" opacity="0.85"/>
-            <rect x="21" y="6" width="4" height="20" fill="white" opacity="0.7"/>
-          </svg>
-          <span style="font-size:18px;font-weight:700">Transcend</span>
+          ${transwesternLogoSvg({ size: 30, mono: isDark, onDark: isDark, wordmark: true })}
         </div>
-        <p style="font-size:20px;font-weight:700;margin-top:8px">${portfolioName} — Active Initiatives</p>
+        <p style="font-family:${isDark ? 'inherit' : BRAND_FONTS.serif};font-size:22px;font-weight:700;margin-top:10px;color:${fg}">${portfolioName} — Active Initiatives</p>
         <p style="font-size:12px;color:${fgMuted2}">Prepared for Jordan Wade</p>
       </div>
       <div style="text-align:right">
@@ -4650,7 +4648,7 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
   ${locationCards}
 
   <div style="border-top:1px solid ${border2};padding-top:12px;margin-top:16px;text-align:center">
-    <p style="font-size:10px;color:${fgMuted2}">Transcend — Confidential · ${reportDate}</p>
+    <p style="font-size:10px;color:${fgMuted2}">© ${new Date().getFullYear()} Transwestern&nbsp;&nbsp;|&nbsp;&nbsp;Confidential &amp; Proprietary · ${reportDate}</p>
   </div>
   </div><!-- end report body wrapper -->
 </body></html>`;
@@ -6051,12 +6049,13 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
     .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
 
   const isDark = printMode === 'dark';
-  const bg = isDark ? '#1a1a2e' : '#ffffff';
-  const fg = isDark ? '#e0e0e0' : '#1a1a1a';
-  const fgMuted = isDark ? '#888888' : '#6b7280';
-  const border = isDark ? '#333355' : '#e5e7eb';
-  const cardBg = isDark ? '#16213e' : '#f9fafb';
-  const accent = isDark ? '#60a5fa' : '#2563eb';
+  // Light (default) = Transwestern daytime brand; Dark kept for on-screen preview only.
+  const bg = isDark ? '#1a1a2e' : BRAND.cream;
+  const fg = isDark ? '#e0e0e0' : BRAND.navy;
+  const fgMuted = isDark ? '#888888' : BRAND.caption;
+  const border = isDark ? '#333355' : BRAND.border;
+  const cardBg = isDark ? '#16213e' : BRAND.white;
+  const accent = isDark ? '#60a5fa' : BRAND.blue;
   // Project Management unified color
   const pmColor = isDark ? '#A86FDF' : '#7A39BB';
   const pmCardBg = isDark ? '#2a1d3e' : '#F5EFFB';
@@ -6077,9 +6076,11 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
     const w = window.open('', '_blank');
     if (!w) return;
     w.document.write(`<!DOCTYPE html><html><head><title>Portfolio Activity Report</title>
+      ${isDark ? '' : BRAND_FONT_LINKS}
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: ${bg}; color: ${fg}; padding: 32px; }
+        body { font-family: ${isDark ? "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" : BRAND_FONTS.sans}; background: ${bg}; color: ${fg}; padding: 32px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+        h1,h2,h3 { font-family:${isDark ? 'inherit' : BRAND_FONTS.serif}; }
         @media print { body { padding: 16px; } }
       </style></head><body>${el.innerHTML}</body></html>`);
     w.document.close();
@@ -6118,24 +6119,20 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
-                    {dashboardLogo ? (
-                      <img src={dashboardLogo} alt={portfolioName} style={{ height: '32px', maxWidth: '160px', objectFit: 'contain' }} />
-                    ) : (
-                      <svg viewBox="0 0 32 32" fill="none" width="28" height="28">
-                        <rect width="32" height="32" rx="6" fill={accent} />
-                        <rect x="7" y="18" width="4" height="8" fill="white" />
-                        <rect x="14" y="12" width="4" height="14" fill="white" opacity="0.85" />
-                        <rect x="21" y="6" width="4" height="20" fill="white" opacity="0.7" />
-                      </svg>
-                    )}
-                    <span style={{ fontSize: '18px', fontWeight: 700 }}>{portfolioName}</span>
+                    <TranswesternLogo size={30} mono={isDark} onDark={isDark} wordmark />
                   </div>
-                  <p style={{ fontSize: '20px', fontWeight: 700, marginTop: '8px' }}>Portfolio Activity Report</p>
+                  <p style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', color: accent, fontWeight: 700, marginTop: '12px' }}>Portfolio Report</p>
+                  <p style={{ fontFamily: isDark ? 'inherit' : BRAND_FONTS.serif, fontSize: '22px', fontWeight: 700, marginTop: '2px', color: fg }}>{portfolioName} — Portfolio Activity</p>
                   <p style={{ fontSize: '12px', color: fgMuted }}>Prepared for Jordan Wade</p>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ fontSize: '11px', color: fgMuted }}>Report Generated</p>
-                  <p style={{ fontSize: '13px', fontWeight: 600 }}>{reportDate}</p>
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                  {dashboardLogo && (
+                    <img src={dashboardLogo} alt={portfolioName} style={{ height: '32px', maxWidth: '160px', objectFit: 'contain' }} />
+                  )}
+                  <div>
+                    <p style={{ fontSize: '11px', color: fgMuted }}>Report Generated</p>
+                    <p style={{ fontSize: '13px', fontWeight: 600 }}>{reportDate}</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -6271,9 +6268,208 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
 
             {/* Footer */}
             <div style={{ borderTop: `1px solid ${border}`, paddingTop: '12px', marginTop: '16px', textAlign: 'center' }}>
-              <p style={{ fontSize: '10px', color: fgMuted }}>{portfolioName} — Confidential · {reportDate}</p>
+              <p style={{ fontSize: '10px', color: fgMuted }}>© {new Date().getFullYear()} Transwestern&nbsp;&nbsp;|&nbsp;&nbsp;Confidential &amp; Proprietary · {reportDate}</p>
             </div>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── QBR Report Modal ──────────────────────────────────────────────────────────
+
+const QBR_QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
+const ACTION_STATUSES = ['Not Started', 'In Progress', 'On Track', 'At Risk', 'Complete'];
+
+// Derive the current quarter (so the modal opens on a sensible default).
+function currentQuarter(): { quarter: string; year: number } {
+  const now = new Date();
+  return { quarter: `Q${Math.floor(now.getMonth() / 3) + 1}`, year: now.getFullYear() };
+}
+
+const EMPTY_METRICS: QBRMetricInput = {
+  occupancyPct: '', occupancyPriorPct: '', economicOccupancyPct: '',
+  noi: '', noiPrior: '', revenue: '', oerPct: '', oerPriorPct: '',
+  renewalRatePct: '', retentionRatePct: '', collectionsRatePct: '', arrears: '', turnoverPct: '',
+};
+
+function QBRReportModal({ leases, notes, portfolioName, onClose }: {
+  leases: LeaseRecord[];
+  notes: Record<number, LeaseNote[]>;
+  portfolioName: string;
+  onClose: () => void;
+}) {
+  const init = currentQuarter();
+  const [quarter, setQuarter] = useState(init.quarter);
+  const [year, setYear] = useState(init.year);
+  const [preparedBy, setPreparedBy] = useState('Transwestern');
+  const [metrics, setMetrics] = useState<QBRMetricInput>(EMPTY_METRICS);
+  const [execSummary, setExecSummary] = useState('');
+  const [opportunities, setOpportunities] = useState('');
+  const [busy, setBusy] = useState<null | 'pdf' | 'pptx'>(null);
+
+  // Prepopulate action items from open initiatives (active, non-archive leases).
+  const [actionItems, setActionItems] = useState<QBRActionItem[]>(() => {
+    const active = leases
+      .filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition')
+      .sort((a, b) => (a.leaseEnd < b.leaseEnd ? -1 : 1))
+      .slice(0, 6);
+    if (active.length === 0) {
+      return [{ id: Date.now(), item: '', owner: '', targetDate: '', status: 'Not Started' }];
+    }
+    return active.map((l, i) => ({
+      id: l.id * 1000 + i,
+      item: `${l.strategy} — ${l.tenant} (${l.property})`,
+      owner: l.clientLead || '',
+      targetDate: l.leaseEnd || '',
+      status: 'In Progress',
+    }));
+  });
+
+  const setMetric = (k: keyof QBRMetricInput, v: string) => setMetrics(prev => ({ ...prev, [k]: v }));
+  const addActionItem = () => setActionItems(prev => [...prev, { id: Date.now(), item: '', owner: '', targetDate: '', status: 'Not Started' }]);
+  const updateActionItem = (id: number, patch: Partial<QBRActionItem>) =>
+    setActionItems(prev => prev.map(a => (a.id === id ? { ...a, ...patch } : a)));
+  const removeActionItem = (id: number) => setActionItems(prev => prev.filter(a => a.id !== id));
+
+  const buildData = () => {
+    const qbrLeases: QBRLease[] = leases.map(l => ({
+      id: l.id, tenant: l.tenant, property: l.property, address: l.address,
+      sqft: l.sqft, leaseStart: l.leaseStart, leaseEnd: l.leaseEnd,
+      status: l.status, strategy: l.strategy, stage: l.stage,
+      clientLead: l.clientLead, market: l.market,
+    }));
+    const qbrNotes: Record<number, { id: number; date: string; author: string; text: string }[]> = {};
+    Object.entries(notes).forEach(([k, v]) => { qbrNotes[Number(k)] = v.map(n => ({ id: n.id, date: n.date, author: n.author, text: n.text })); });
+    return deriveQBR({
+      leases: qbrLeases, notes: qbrNotes, portfolioName, quarter, year, preparedBy,
+      metrics, execSummary, opportunitiesNarrative: opportunities,
+      actionItems: actionItems.filter(a => a.item.trim()),
+    });
+  };
+
+  const handlePdf = () => { setBusy('pdf'); try { openQBRPdf(buildData()); } finally { setTimeout(() => setBusy(null), 600); } };
+  const handlePptx = async () => {
+    setBusy('pptx');
+    try { await downloadQBRPptx(buildData()); }
+    catch (e) { console.error('QBR PPTX export failed', e); alert('Could not generate the PowerPoint. See console for details.'); }
+    finally { setBusy(null); }
+  };
+
+  const metricField = (k: keyof QBRMetricInput, label: string, placeholder = '') => (
+    <div>
+      <label className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">{label}</label>
+      <Input value={metrics[k]} onChange={e => setMetric(k, e.target.value)} placeholder={placeholder} className="h-8 text-xs" />
+    </div>
+  );
+
+  const yearOptions = [year - 1, year, year + 1].filter((v, i, a) => a.indexOf(v) === i);
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[95vh] p-0 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+          <div className="flex items-center gap-2.5">
+            <TranswesternLogo size={24} />
+            <div>
+              <h2 className="text-sm font-bold">QBR Report — Quarterly Business Review</h2>
+              <p className="text-xs text-muted-foreground">{portfolioName}</p>
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={onClose}><X className="w-4 h-4" /></Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          <p className="text-xs text-muted-foreground leading-relaxed bg-muted/50 rounded-md p-3">{QBR_PURPOSE}</p>
+
+          {/* Quarter / Year / Prepared by */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Quarter</label>
+              <Select value={quarter} onValueChange={setQuarter}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{QBR_QUARTERS.map(q => <SelectItem key={q} value={q} className="text-xs">{q}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Year</label>
+              <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>{yearOptions.map(y => <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Prepared By</label>
+              <Input value={preparedBy} onChange={e => setPreparedBy(e.target.value)} className="h-8 text-xs" />
+            </div>
+          </div>
+
+          {/* Executive summary */}
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Executive Summary (narrative)</label>
+            <Textarea value={execSummary} onChange={e => setExecSummary(e.target.value)} rows={3} className="text-xs"
+              placeholder="Headline takeaways for the quarter. The QBR purpose statement is added automatically." />
+          </div>
+
+          {/* Performance metrics */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: BRAND.blue }}>Portfolio Performance</p>
+            <p className="text-[10px] text-muted-foreground mb-2">Occupancy is pre-derived from portfolio SF; enter real values for anything not tracked. Leave blank to show “—”. Prior-quarter fields drive QoQ arrows.</p>
+            <div className="grid grid-cols-3 gap-3">
+              {metricField('occupancyPct', 'Occupancy %', 'e.g. 92')}
+              {metricField('occupancyPriorPct', 'Occupancy % (Prior)', 'e.g. 90')}
+              {metricField('economicOccupancyPct', 'Economic Occ. %')}
+              {metricField('noi', 'NOI', 'e.g. $1.2M')}
+              {metricField('noiPrior', 'NOI (Prior)')}
+              {metricField('revenue', 'Revenue')}
+              {metricField('oerPct', 'OER %')}
+              {metricField('oerPriorPct', 'OER % (Prior)')}
+              {metricField('renewalRatePct', 'Renewal Rate %')}
+              {metricField('retentionRatePct', 'Retention Rate %')}
+              {metricField('collectionsRatePct', 'Collections %')}
+              {metricField('arrears', 'Arrears')}
+              {metricField('turnoverPct', 'Tenant Turnover %')}
+            </div>
+          </div>
+
+          {/* Upcoming opportunities narrative */}
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Upcoming Opportunities (narrative)</label>
+            <Textarea value={opportunities} onChange={e => setOpportunities(e.target.value)} rows={2} className="text-xs"
+              placeholder="Pipeline, value-add, expansions. Upcoming lease expirations are derived automatically from lease end dates." />
+          </div>
+
+          {/* Action plan */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[11px] font-bold uppercase tracking-wide" style={{ color: BRAND.blue }}>Action Plan — Next Quarter</p>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={addActionItem}><Plus className="w-3 h-3" />Add</Button>
+            </div>
+            <div className="space-y-2">
+              {actionItems.map(a => (
+                <div key={a.id} className="grid grid-cols-[1fr_140px_120px_120px_28px] gap-2 items-center">
+                  <Input value={a.item} onChange={e => updateActionItem(a.id, { item: e.target.value })} placeholder="Action item" className="h-8 text-xs" />
+                  <Input value={a.owner} onChange={e => updateActionItem(a.id, { owner: e.target.value })} placeholder="Owner" className="h-8 text-xs" />
+                  <Input type="date" value={a.targetDate} onChange={e => updateActionItem(a.id, { targetDate: e.target.value })} className="h-8 text-xs" />
+                  <Select value={a.status} onValueChange={v => updateActionItem(a.id, { status: v })}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>{ACTION_STATUSES.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}</SelectContent>
+                  </Select>
+                  <Button size="sm" variant="ghost" className="h-8 w-7 p-0" onClick={() => removeActionItem(a.id)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border">
+          <Button size="sm" variant="outline" className="h-9 gap-1.5 text-xs" disabled={busy !== null} onClick={handlePdf}>
+            <Printer className="w-3.5 h-3.5" />{busy === 'pdf' ? 'Opening…' : 'Generate PDF'}
+          </Button>
+          <Button size="sm" className="h-9 gap-1.5 text-xs" disabled={busy !== null} onClick={handlePptx}>
+            <Presentation className="w-3.5 h-3.5" />{busy === 'pptx' ? 'Building…' : 'Download PowerPoint'}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -6319,6 +6515,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const [slideDeckOpen, setSlideDeckOpen] = useState(false);
   const [clientLogos, setClientLogos] = useIDBSplitRecordState<string>('cre_client_logos', INITIAL_CLIENT_LOGOS);
   const [printReportOpen, setPrintReportOpen] = useState(false);
+  const [qbrReportOpen, setQbrReportOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
   const [portfolioName, setPortfolioName] = useState('Learfield Portfolio');
   const [massUploadOpen, setMassUploadOpen] = useState(false);
@@ -6605,6 +6802,16 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         />
       )}
 
+      {/* QBR Report Modal */}
+      {qbrReportOpen && (
+        <QBRReportModal
+          leases={leasesData}
+          notes={notes}
+          portfolioName={portfolioName}
+          onClose={() => setQbrReportOpen(false)}
+        />
+      )}
+
       {/* Shareable Snapshot Modal */}
       {snapshotOpen && (
         <ShareableSnapshotModal
@@ -6718,9 +6925,14 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
             </p>
           </div>
         </div>
-        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setPrintReportOpen(true)}>
-          <Printer className="w-3.5 h-3.5" />Print Report
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setPrintReportOpen(true)}>
+            <Printer className="w-3.5 h-3.5" />Print Report
+          </Button>
+          <Button size="sm" className="gap-1.5 text-xs" onClick={() => setQbrReportOpen(true)}>
+            <FileBarChart className="w-3.5 h-3.5" />QBR Report
+          </Button>
+        </div>
       </div>
 
       {/* Module Tabs */}
