@@ -3,13 +3,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Building2, Eye, EyeOff, LogIn, Upload, X, Lock, Mail, Sun, Moon } from 'lucide-react';
 import { useTheme } from '@/components/Layout';
+import { login, type MeResponse } from '@/lib/auth';
 
 interface LoginPageProps {
-  onLogin: () => void;
+  onLogin: (me: MeResponse) => void;
 }
-
-const ADMIN_EMAIL = 'jomwade13@icloud.com';
-const ADMIN_PASS = 'H@nn@h123';
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const { theme, toggle } = useTheme();
@@ -23,19 +21,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   // Default logo: Transwestern primary brand mark (user-uploadable to override)
   const [logo, setLogo] = useState<string>('/transwestern-logo-primary.png');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
-    setTimeout(() => {
-      if (email === ADMIN_EMAIL && password === ADMIN_PASS) {
-        onLogin();
-      } else {
-        setError('Invalid email or password. Please try again.');
-        setLoading(false);
-      }
-    }, 600);
+    try {
+      const me = await login(email, password);
+      onLogin(me);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid email or password. Please try again.');
+      setLoading(false);
+    }
   };
 
   const handleLogoUpload = (file: File) => {
