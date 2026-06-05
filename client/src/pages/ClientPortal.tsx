@@ -1,697 +1,138 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import {
-  Building2, Plus, ChevronRight, Briefcase, MapPin, Clock, Users,
-  Search, LogOut, Settings, Upload, X, Mail, Shield, ShieldCheck,
-  Eye, Edit3, Trash2, UserPlus, Crown, ChevronDown, Check, Copy,
-  MoreHorizontal, UserX, ArrowUpRight, Sun, Moon, History
+  Building2, Plus, ChevronRight, Briefcase, MapPin, Clock,
+  LogOut, Settings, Upload, X, Crown, Edit3, Eye, Sun, Moon, History, Shield,
 } from 'lucide-react';
 import { useTheme } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
-  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger
+  DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger
-} from '@/components/ui/tooltip';
-import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
-import { usePersistedState } from '@/lib/usePersistedState';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { compressImageFile } from '@/lib/imageUtils';
-import { ImageIcon } from 'lucide-react';
 import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
 import VersionHistoryModal from '@/components/VersionHistoryModal';
-
-// Lightweight lease shape for address-autocomplete in ClientPortal.
-interface PortalLease {
-  id: number;
-  tenant: string;
-  property: string;
-  address: string;
-}
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiRequest } from '@/lib/queryClient';
+import type { MeResponse, AssignedPortfolio } from '@/lib/auth';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type PortfolioRole = 'owner' | 'editor' | 'viewer';
 
-export interface PortfolioUser {
-  id: number;
-  name: string;
-  email: string;
-  initials: string;
-  color: string;
-  avatarUrl?: string;
-}
-
-export interface PortfolioAssignment {
-  userId: number;
-  portfolioId: number;
-  role: PortfolioRole;
-  invitedAt: string;
-  invitedBy: string;
-}
-
 export interface ClientPortfolio {
   id: number;
   name: string;
   clientName: string;
-  locations: number;
-  totalSF: string;
   market: string;
-  lastUpdated: string;
   status: 'Active' | 'Archived';
   color: string;
-  logo?: string;        // Optional client/portfolio logo (data URL)
 }
 
 // ── Role Config ──────────────────────────────────────────────────────────────
 
-const ROLE_CONFIG: Record<PortfolioRole, { label: string; description: string; icon: typeof Crown; color: string; bgColor: string }> = {
-  owner:  { label: 'Owner',  description: 'Full access — manage team, settings, and all data', icon: Crown,       color: '#F59E0B', bgColor: '#F59E0B20' },
-  editor: { label: 'Editor', description: 'Edit properties, initiatives, roadmap, and QBR data',  icon: Edit3,       color: '#3B82F6', bgColor: '#3B82F620' },
-  viewer: { label: 'Viewer', description: 'View-only access — cannot modify any data',            icon: Eye,         color: '#6B7280', bgColor: '#6B728020' },
+const ROLE_CONFIG: Record<PortfolioRole, { label: string; icon: typeof Crown; color: string; bgColor: string }> = {
+  owner:  { label: 'Owner',  icon: Crown, color: '#F59E0B', bgColor: '#F59E0B20' },
+  editor: { label: 'Editor', icon: Edit3, color: '#3B82F6', bgColor: '#3B82F620' },
+  viewer: { label: 'Viewer', icon: Eye,   color: '#6B7280', bgColor: '#6B728020' },
 };
-
-// ── Seed Data ────────────────────────────────────────────────────────────────
-
-const CURRENT_USER: PortfolioUser = {
-  id: 1, name: 'Jordan Wade', email: 'jomwade13@icloud.com', initials: 'JW', color: '#3B82F6',
-};
-
-const SEED_USERS: PortfolioUser[] = [
-  CURRENT_USER,
-  { id: 2, name: 'Alisha Shields', email: 'alisha.shields@transcendcre.com', initials: 'AS', color: '#8B5CF6' },
-  { id: 3, name: 'Matt Epperson',  email: 'matt.epperson@transcendcre.com',  initials: 'ME', color: '#10B981' },
-  { id: 4, name: 'Travis Hilty',   email: 'travis.hilty@transcendcre.com',   initials: 'TH', color: '#F59E0B' },
-  { id: 5, name: 'Sarah Stieferman', email: 'sarah.s@transcendcre.com',      initials: 'SS', color: '#EC4899' },
-];
-
-const SEED_ASSIGNMENTS: PortfolioAssignment[] = [
-  { userId: 1, portfolioId: 1, role: 'owner',  invitedAt: '2025-01-15', invitedBy: 'System' },
-  { userId: 2, portfolioId: 1, role: 'editor', invitedAt: '2025-03-01', invitedBy: 'Jordan Wade' },
-  { userId: 3, portfolioId: 1, role: 'viewer', invitedAt: '2025-06-10', invitedBy: 'Jordan Wade' },
-  { userId: 1, portfolioId: 2, role: 'owner',  invitedAt: '2025-02-20', invitedBy: 'System' },
-  { userId: 4, portfolioId: 2, role: 'editor', invitedAt: '2025-04-05', invitedBy: 'Jordan Wade' },
-  { userId: 1, portfolioId: 3, role: 'owner',  invitedAt: '2025-05-12', invitedBy: 'System' },
-  { userId: 5, portfolioId: 3, role: 'viewer', invitedAt: '2025-07-01', invitedBy: 'Jordan Wade' },
-];
-
-const INITIAL_PORTFOLIOS: ClientPortfolio[] = [
-  { id: 1, name: 'Learfield Portfolio',            clientName: 'Learfield Communications', locations: 166, totalSF: '389,572 SF',   market: 'National',  lastUpdated: 'Today',       status: 'Active', color: '#3B82F6' },
-  { id: 2, name: 'Midwest Industrial Fund',        clientName: 'Apex Capital Partners', locations: 32, totalSF: '4,200,000 SF', market: 'Midwest',   lastUpdated: '2 days ago',  status: 'Active', color: '#8B5CF6' },
-  { id: 3, name: 'Southeast Healthcare Portfolio',  clientName: 'MedCore Health Systems', locations: 18, totalSF: '680,000 SF',  market: 'Southeast', lastUpdated: '1 week ago',  status: 'Active', color: '#10B981' },
-];
 
 const PORTFOLIO_COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899', '#6366F1'];
-const AVATAR_COLORS    = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899', '#6366F1', '#14B8A6', '#A855F7'];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function getInitials(name: string): string {
-  return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
-}
-
-function getRoleBadge(role: PortfolioRole, size: 'sm' | 'md' = 'sm') {
+function getRoleBadge(role: PortfolioRole) {
   const cfg = ROLE_CONFIG[role];
   const Icon = cfg.icon;
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full font-medium ${size === 'sm' ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'}`}
+      className="inline-flex items-center gap-1 rounded-full font-medium text-[10px] px-1.5 py-0.5"
       style={{ backgroundColor: cfg.bgColor, color: cfg.color }}
     >
-      <Icon className={size === 'sm' ? 'w-2.5 h-2.5' : 'w-3 h-3'} />
+      <Icon className="w-2.5 h-2.5" />
       {cfg.label}
     </span>
   );
 }
 
-// ── Invite User Modal ────────────────────────────────────────────────────────
-
-function InviteModal({ portfolioId, portfolioName, existingUserIds, users, onInvite, onClose }: {
-  portfolioId: number;
-  portfolioName: string;
-  existingUserIds: Set<number>;
-  users: PortfolioUser[];
-  onInvite: (email: string, name: string, role: PortfolioRole) => void;
-  onClose: () => void;
-}) {
-  const [email, setEmail] = useState('');
-  const [name, setName]   = useState('');
-  const [role, setRole]   = useState<PortfolioRole>('viewer');
-  const [sent, setSent]   = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
-
-  // Check if the email matches a known user already in the portfolio
-  const existingUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  const alreadyAssigned = existingUser && existingUserIds.has(existingUser.id);
-
-  const handleInvite = () => {
-    if (!email.trim()) return;
-    const n = name.trim() || existingUser?.name || email.split('@')[0];
-    onInvite(email.trim(), n, role);
-    setSent(true);
-    setTimeout(() => { setSent(false); setEmail(''); setName(''); setRole('viewer'); onClose(); }, 1200);
+function toClientPortfolio(p: AssignedPortfolio, idx: number): ClientPortfolio {
+  return {
+    id: p.id,
+    name: p.name,
+    clientName: p.clientName || 'Unassigned',
+    market: p.market || 'TBD',
+    status: p.status,
+    color: PORTFOLIO_COLORS[idx % PORTFOLIO_COLORS.length],
   };
-
-  const handleCopyLink = () => {
-    const fakeLink = `https://app.transcendcre.com/invite/${portfolioId}?role=${role}`;
-    navigator.clipboard?.writeText(fakeLink).catch(() => {});
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
-  };
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-md bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
-        <DialogHeader>
-          <DialogTitle className="text-slate-900 dark:text-white flex items-center gap-2">
-            <UserPlus className="w-4 h-4 text-blue-500 dark:text-blue-400" />
-            Invite to {portfolioName}
-          </DialogTitle>
-        </DialogHeader>
-
-        {sent ? (
-          <div className="py-8 text-center">
-            <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-500/20 flex items-center justify-center mx-auto mb-3">
-              <Check className="w-6 h-6 text-green-600 dark:text-green-400" />
-            </div>
-            <p className="text-sm font-medium text-slate-900 dark:text-white">Invitation Sent</p>
-            <p className="text-xs text-slate-500 dark:text-white/40 mt-1">{email} has been invited as {ROLE_CONFIG[role].label}</p>
-          </div>
-        ) : (
-          <div className="space-y-4 mt-2">
-            {/* Email */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-600 dark:text-white/50">Email Address</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-white/25" />
-                <Input
-                  type="email"
-                  placeholder="colleague@company.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  className="pl-10 h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 dark:bg-white/[0.06] dark:border-white/[0.1] dark:text-white dark:placeholder:text-white/25"
-                  data-testid="input-invite-email"
-                />
-              </div>
-              {alreadyAssigned && (
-                <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                  <Shield className="w-3 h-3" />This user already has access to this portfolio.
-                </p>
-              )}
-            </div>
-
-            {/* Name (optional, auto-fills if known) */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-600 dark:text-white/50">Full Name <span className="text-slate-400 dark:text-white/25">(optional)</span></label>
-              <Input
-                placeholder={existingUser?.name || 'e.g. Jane Smith'}
-                value={name}
-                onChange={e => setName(e.target.value)}
-                className="h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 dark:bg-white/[0.06] dark:border-white/[0.1] dark:text-white dark:placeholder:text-white/25"
-                data-testid="input-invite-name"
-              />
-            </div>
-
-            {/* Role */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-600 dark:text-white/50">Permission Level</label>
-              <div className="space-y-1.5">
-                {(['editor', 'viewer'] as PortfolioRole[]).map(r => {
-                  const cfg = ROLE_CONFIG[r];
-                  const Icon = cfg.icon;
-                  const selected = role === r;
-                  return (
-                    <button
-                      key={r}
-                      onClick={() => setRole(r)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left ${
-                        selected
-                          ? 'border-blue-500/50 bg-blue-50 dark:border-blue-500/40 dark:bg-blue-500/10'
-                          : 'border-slate-200 bg-slate-50 hover:bg-slate-100 dark:border-white/[0.06] dark:bg-white/[0.02] dark:hover:bg-white/[0.04]'
-                      }`}
-                      data-testid={`button-role-${r}`}
-                    >
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: cfg.bgColor }}>
-                        <Icon className="w-4 h-4" style={{ color: cfg.color }} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-semibold ${selected ? 'text-slate-900 dark:text-white' : 'text-slate-700 dark:text-white/70'}`}>{cfg.label}</p>
-                        <p className="text-[10px] text-slate-500 dark:text-white/35">{cfg.description}</p>
-                      </div>
-                      {selected && (
-                        <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center shrink-0">
-                          <Check className="w-3 h-3 text-white" />
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Shareable Link */}
-            <div className="border-t border-slate-200 dark:border-white/[0.06] pt-3 mt-1">
-              <button
-                onClick={handleCopyLink}
-                className="w-full flex items-center justify-center gap-2 h-8 text-xs text-slate-500 hover:text-slate-800 dark:text-white/40 dark:hover:text-white/60 transition-colors"
-              >
-                {linkCopied ? <Check className="w-3 h-3 text-green-500 dark:text-green-400" /> : <Copy className="w-3 h-3" />}
-                {linkCopied ? 'Link Copied' : 'Copy Invite Link'}
-              </button>
-            </div>
-
-            {/* Actions */}
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/[0.06]" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white gap-1.5"
-                onClick={handleInvite}
-                disabled={!email.trim() || !!alreadyAssigned}
-                data-testid="button-send-invite"
-              >
-                <Mail className="w-3.5 h-3.5" />Send Invite
-              </Button>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Manage Team Modal ────────────────────────────────────────────────────────
-
-function ManageTeamModal({ portfolioId, portfolioName, users, assignments, onChangeRole, onRemove, onOpenInvite, onClose }: {
-  portfolioId: number;
-  portfolioName: string;
-  users: PortfolioUser[];
-  assignments: PortfolioAssignment[];
-  onChangeRole: (userId: number, newRole: PortfolioRole) => void;
-  onRemove: (userId: number) => void;
-  onOpenInvite: () => void;
-  onClose: () => void;
-}) {
-  const portfolioAssignments = assignments
-    .filter(a => a.portfolioId === portfolioId)
-    .sort((a, b) => {
-      const order: Record<PortfolioRole, number> = { owner: 0, editor: 1, viewer: 2 };
-      return order[a.role] - order[b.role];
-    });
-
-  return (
-    <Dialog open onOpenChange={onClose}>
-      <DialogContent className="max-w-lg bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
-        <DialogHeader>
-          <DialogTitle className="text-slate-900 dark:text-white flex items-center gap-2">
-            <Users className="w-4 h-4 text-blue-500 dark:text-blue-400" />
-            Team — {portfolioName}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-1 mt-2 max-h-[380px] overflow-y-auto pr-1">
-          {portfolioAssignments.map(assignment => {
-            const user = users.find(u => u.id === assignment.userId);
-            if (!user) return null;
-            const isOwner = assignment.role === 'owner';
-            const isCurrentUser = user.id === CURRENT_USER.id;
-
-            return (
-              <div key={user.id} className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-white/[0.03] group transition-colors">
-                <Avatar className="w-8 h-8 shrink-0">
-                  <AvatarFallback className="text-xs font-bold text-white" style={{ backgroundColor: user.color }}>
-                    {user.initials}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-slate-900 dark:text-white truncate">
-                    {user.name}
-                    {isCurrentUser && <span className="text-slate-400 dark:text-white/25 ml-1">(you)</span>}
-                  </p>
-                  <p className="text-[10px] text-slate-500 dark:text-white/35 truncate">{user.email}</p>
-                </div>
-
-                {isOwner ? (
-                  getRoleBadge('owner', 'sm')
-                ) : (
-                  <Select
-                    value={assignment.role}
-                    onValueChange={(v: string) => onChangeRole(user.id, v as PortfolioRole)}
-                  >
-                    <SelectTrigger className="h-7 w-[100px] text-[10px] bg-slate-100 border-slate-200 text-slate-900 dark:bg-white/[0.04] dark:border-white/[0.08] dark:text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="editor" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Edit3 className="w-3 h-3" />Editor</span>
-                      </SelectItem>
-                      <SelectItem value="viewer" className="text-xs">
-                        <span className="flex items-center gap-1.5"><Eye className="w-3 h-3" />Viewer</span>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                )}
-
-                {!isOwner && !isCurrentUser && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:text-white/20 dark:hover:text-white/60 dark:hover:bg-white/[0.06] opacity-0 group-hover:opacity-100 transition-all">
-                        <MoreHorizontal className="w-3.5 h-3.5" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem onClick={() => onRemove(user.id)} className="text-red-500 dark:text-red-400 focus:text-red-500 dark:focus:text-red-400">
-                        <UserX className="w-3.5 h-3.5 mr-2" />Remove from portfolio
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Invite button */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-200 dark:border-white/[0.06]">
-          <p className="text-[10px] text-slate-500 dark:text-white/25">{portfolioAssignments.length} member{portfolioAssignments.length !== 1 ? 's' : ''}</p>
-          <Button
-            size="sm"
-            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white gap-1.5 text-xs"
-            onClick={() => { onClose(); setTimeout(onOpenInvite, 150); }}
-            data-testid="button-invite-from-team"
-          >
-            <UserPlus className="w-3.5 h-3.5" />Invite User
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
 // ── Main Component ───────────────────────────────────────────────────────────
 
 interface ClientPortalProps {
+  session: MeResponse;
   onSelectPortfolio: (portfolio: ClientPortfolio & { userRole: PortfolioRole }) => void;
   onLogout: () => void;
+  onOpenAdmin: () => void;
 }
 
-export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPortalProps) {
+export default function ClientPortal({ session, onSelectPortfolio, onLogout, onOpenAdmin }: ClientPortalProps) {
   const { theme, toggle } = useTheme();
   const isDark = theme === 'dark';
-  const [portfolios, setPortfolios]       = usePersistedState<ClientPortfolio[]>('cre_portfolios', INITIAL_PORTFOLIOS);
-  const [users, setUsers]                 = usePersistedState<PortfolioUser[]>('cre_users', SEED_USERS);
-  const [assignments, setAssignments]     = usePersistedState<PortfolioAssignment[]>('cre_assignments', SEED_ASSIGNMENTS);
+  const qc = useQueryClient();
 
-  // Ensure the admin account (jomwade13@icloud.com / CURRENT_USER) is owner of
-  // every portfolio. Promotes any stale viewer/editor records, and adds
-  // missing assignments so newly seeded portfolios are also owned.
-  useEffect(() => {
-    setAssignments(prev => {
-      let changed = false;
-      const next = prev.map(a => {
-        if (a.userId === CURRENT_USER.id && a.role !== 'owner') {
-          changed = true;
-          return { ...a, role: 'owner' as PortfolioRole };
-        }
-        return a;
-      });
-      const ownedPids = new Set(next.filter(a => a.userId === CURRENT_USER.id).map(a => a.portfolioId));
-      portfolios.forEach(p => {
-        if (!ownedPids.has(p.id)) {
-          next.push({
-            userId: CURRENT_USER.id,
-            portfolioId: p.id,
-            role: 'owner',
-            invitedAt: new Date().toISOString().slice(0, 10),
-            invitedBy: 'System',
-          });
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-    // Make sure the admin user record itself exists in the users list.
-    setUsers(prev => prev.find(u => u.id === CURRENT_USER.id) ? prev : [CURRENT_USER, ...prev]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [portfolios.length]);
+  const isAdmin = session.user.role === 'admin';
+  const displayName = session.user.name || session.user.email;
+  const initials = (session.user.name || session.user.email)
+    .split(/[\s@.]+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 2) || 'U';
 
-  // One-time recovery: if a seeded portfolio (Learfield, Midwest, Southeast)
-  // was accidentally deleted, restore it on next load. Underlying lease data
-  // for the Learfield Portfolio still lives in cre_leases / IndexedDB, so the
-  // portfolio card just needs to be re-added to the list. This runs once per
-  // browser (gated by a localStorage flag) so the user can still intentionally
-  // delete a seed portfolio later if they want to.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const RECOVERY_KEY = 'cre_seed_portfolio_recovery_v1';
-    if (window.localStorage.getItem(RECOVERY_KEY) === 'done') return;
-    setPortfolios(prev => {
-      const byId = new Map(prev.map(p => [p.id, p]));
-      let changed = false;
-      // Recompute Learfield stats from cre_leases so the card reflects reality.
-      let learfieldStats: { locations: number; totalSF: string } | null = null;
-      try {
-        const raw = window.localStorage.getItem('cre_leases');
-        if (raw) {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr) && arr.length > 0) {
-            const totalSf = arr.reduce((s: number, l: any) => s + (Number(l?.sf) || 0), 0);
-            learfieldStats = {
-              locations: arr.length,
-              totalSF: `${totalSf.toLocaleString()} SF`,
-            };
-          }
-        }
-      } catch { /* ignore */ }
-      INITIAL_PORTFOLIOS.forEach(seed => {
-        if (!byId.has(seed.id)) {
-          const restored: ClientPortfolio = seed.id === 1 && learfieldStats
-            ? { ...seed, locations: learfieldStats.locations, totalSF: learfieldStats.totalSF, lastUpdated: 'Restored' }
-            : { ...seed, lastUpdated: 'Restored' };
-          byId.set(seed.id, restored);
-          changed = true;
-        }
-      });
-      window.localStorage.setItem(RECOVERY_KEY, 'done');
-      return changed ? Array.from(byId.values()) : prev;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Server is the source of truth for which portfolios this user may see.
+  const portfolios = useMemo<(ClientPortfolio & { userRole: PortfolioRole })[]>(
+    () => session.portfolios.map((p, i) => ({ ...toClientPortfolio(p, i), userRole: p.assignmentRole as PortfolioRole })),
+    [session.portfolios],
+  );
 
-  // One-time recovery: rebuild the user's custom "Learfield Portfolio (Custom)"
-  // card. The portfolio card itself was deleted, but all underlying lease data,
-  // notes, photos, floor plans, and PDF documents live in app-wide storage keys
-  // (cre_leases, cre_lease_notes, cre_lease_photos, cre_lease_documents,
-  // cre_milestones, cre_manual_dates) and were never touched by the delete
-  // handler. Re-adding the portfolio card surfaces all of that content again.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const KEY = 'cre_custom_portfolio_recovery_v1';
-    if (window.localStorage.getItem(KEY) === 'done') return;
-    setPortfolios(prev => {
-      // Don't double-add if a card with this name already exists.
-      if (prev.some(p => p.name === 'Learfield Portfolio (Custom)')) {
-        window.localStorage.setItem(KEY, 'done');
-        return prev;
-      }
-      // Compute fresh stats from cre_leases (all your custom data).
-      let locations = 0;
-      let totalSF = '0 SF';
-      try {
-        const raw = window.localStorage.getItem('cre_leases');
-        if (raw) {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr)) {
-            locations = arr.length;
-            const totalSf = arr.reduce((s: number, l: any) => s + (Number(l?.sf) || 0), 0);
-            totalSF = `${totalSf.toLocaleString()} SF`;
-          }
-        }
-      } catch { /* ignore */ }
-      const restored: ClientPortfolio = {
-        id: Date.now(),
-        name: 'Learfield Portfolio (Custom)',
-        clientName: 'Learfield Communications',
-        locations,
-        totalSF,
-        market: 'National',
-        lastUpdated: 'Restored',
-        status: 'Active',
-        color: '#10B981',
-      };
-      window.localStorage.setItem(KEY, 'done');
-      return [...prev, restored];
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const [search, setSearch]               = useState('');
-  const [showAddModal, setShowAddModal]   = useState(false);
+  const [search, setSearch] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
-  const [newName, setNewName]             = useState('');
-  const [newClient, setNewClient]         = useState('');
-  const [newMarket, setNewMarket]         = useState('');
-  const [newLogo, setNewLogo]             = useState<string>('');
-  const [logo, setLogo]                   = useState<string>('/transwestern-logo-primary.png');
-  const [invitePortfolioId, setInvitePortfolioId] = useState<number | null>(null);
-  const [teamPortfolioId, setTeamPortfolioId]     = useState<number | null>(null);
+  const [newName, setNewName] = useState('');
+  const [newClient, setNewClient] = useState('');
+  const [newMarket, setNewMarket] = useState('');
+  const [logo, setLogo] = useState<string>('/transwestern-logo-primary.png');
 
-  // Read leases (set inside the active portfolio dashboard) so we can search by address/tenant/property.
-  // Read directly from localStorage — do NOT use usePersistedState here, since it writes the initial value
-  // and would overwrite the seed leases written by PortfolioTracker.
-  const leasesData = useMemo<PortalLease[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = window.localStorage.getItem('cre_leases');
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr : [];
-    } catch { return []; }
-  // Re-read whenever search changes — ensures latest data after returning from a portfolio.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  const createPortfolio = useMutation({
+    mutationFn: async (data: { name: string; clientName: string; market: string }) => {
+      const res = await apiRequest('POST', '/api/admin/portfolios', data);
+      return res.json();
+    },
+    onSuccess: () => {
+      // Refresh session so the new portfolio appears (admins see all).
+      qc.invalidateQueries();
+      window.location.reload();
+    },
+  });
 
-  const filtered = portfolios.filter(p => {
+  const filtered = portfolios.filter((p) => {
     const q = search.toLowerCase();
     if (!q) return true;
-    if (p.name.toLowerCase().includes(q)) return true;
-    if (p.clientName.toLowerCase().includes(q)) return true;
-    if (p.market.toLowerCase().includes(q)) return true;
-    // Also match if any lease matches the search (currently shared across portfolios).
-    return leasesData.some(l =>
-      (l.tenant && l.tenant.toLowerCase().includes(q)) ||
-      (l.property && l.property.toLowerCase().includes(q)) ||
-      (l.address && l.address.toLowerCase().includes(q))
+    return (
+      p.name.toLowerCase().includes(q) ||
+      p.clientName.toLowerCase().includes(q) ||
+      p.market.toLowerCase().includes(q)
     );
   });
 
-  // Combined suggestion list — portfolios first, then leases (deduped by primary).
-  const searchSuggestions: SuggestionItem[] = useMemo(() => {
-    const items: SuggestionItem[] = [];
-    portfolios.forEach(p => {
-      items.push({ id: `p:${p.id}`, primary: p.name, secondary: p.clientName, address: p.market });
-    });
-    leasesData.forEach(l => {
-      items.push({ id: `l:${l.id}`, primary: l.tenant || l.property || l.address || '', secondary: l.property, address: l.address });
-    });
-    return items;
-  }, [portfolios, leasesData]);
-
-  // Lookup helpers
-  const getPortfolioAssignments = (pid: number) => assignments.filter(a => a.portfolioId === pid);
-  const getPortfolioUsers = (pid: number) => {
-    const pAssignments = getPortfolioAssignments(pid);
-    return pAssignments.map(a => {
-      const u = users.find(u => u.id === a.userId);
-      return u ? { ...u, role: a.role } : null;
-    }).filter(Boolean) as (PortfolioUser & { role: PortfolioRole })[];
-  };
-  const getCurrentUserRole = (pid: number): PortfolioRole => {
-    const a = assignments.find(a => a.portfolioId === pid && a.userId === CURRENT_USER.id);
-    // The admin account (jomwade13@icloud.com) is always the owner. If no assignment
-    // exists yet — or a stale viewer record is cached — return 'owner' so edit
-    // capabilities aren't blocked.
-    return a?.role ?? 'owner';
-  };
-
-  // ── Handlers ───────────────────────────────────────────────────────────────
-
-  // Pending delete portfolio (shown in confirmation modal)
-  const [deletePortfolioId, setDeletePortfolioId] = useState<number | null>(null);
-
-  const handleDeletePortfolio = (id: number) => {
-    setPortfolios(prev => prev.filter(p => p.id !== id));
-    setAssignments(prev => prev.filter(a => a.portfolioId !== id));
-    setDeletePortfolioId(null);
-  };
-
-  const handlePortfolioLogoUpload = async (id: number, file: File) => {
-    if (!file.type.startsWith('image/')) return;
-    const dataUrl = await compressImageFile(file, { maxDimension: 320, quality: 0.85, targetMaxBytes: 40 * 1024, minQuality: 0.6, minDimension: 200 });
-    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: dataUrl } : p));
-  };
-
-  const handleRemovePortfolioLogo = (id: number) => {
-    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, logo: undefined } : p));
-  };
-
-  const handleChangePortfolioColor = (id: number, color: string) => {
-    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, color } : p));
-  };
-
-  const handleUpdatePortfolioField = <K extends keyof ClientPortfolio>(id: number, field: K, value: ClientPortfolio[K]) => {
-    setPortfolios(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
-  };
+  const searchSuggestions: SuggestionItem[] = useMemo(
+    () => portfolios.map((p) => ({ id: `p:${p.id}`, primary: p.name, secondary: p.clientName, address: p.market })),
+    [portfolios],
+  );
 
   const handleAdd = () => {
     if (!newName.trim()) return;
-    const newId = Date.now();
-    const newPortfolio: ClientPortfolio = {
-      id: newId,
-      name: newName.trim(),
-      clientName: newClient.trim() || 'Unassigned',
-      locations: 0,
-      totalSF: '0 SF',
-      market: newMarket.trim() || 'TBD',
-      lastUpdated: 'Just now',
-      status: 'Active',
-      color: PORTFOLIO_COLORS[portfolios.length % PORTFOLIO_COLORS.length],
-      logo: newLogo || undefined,
-    };
-    setPortfolios(prev => [...prev, newPortfolio]);
-    // Auto-assign creator as owner
-    setAssignments(prev => [...prev, {
-      userId: CURRENT_USER.id,
-      portfolioId: newId,
-      role: 'owner' as PortfolioRole,
-      invitedAt: new Date().toISOString().slice(0, 10),
-      invitedBy: 'System',
-    }]);
-    setNewName(''); setNewClient(''); setNewMarket(''); setNewLogo('');
+    createPortfolio.mutate({ name: newName.trim(), clientName: newClient.trim(), market: newMarket.trim() });
+    setNewName(''); setNewClient(''); setNewMarket('');
     setShowAddModal(false);
-  };
-
-  const handleInvite = (portfolioId: number, email: string, name: string, role: PortfolioRole) => {
-    // Check if user already exists
-    let user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    if (!user) {
-      user = {
-        id: Date.now(),
-        name,
-        email: email.toLowerCase(),
-        initials: getInitials(name),
-        color: AVATAR_COLORS[users.length % AVATAR_COLORS.length],
-      };
-      setUsers(prev => [...prev, user!]);
-    }
-    // Add assignment
-    setAssignments(prev => {
-      // Remove any existing assignment for this user/portfolio
-      const without = prev.filter(a => !(a.userId === user!.id && a.portfolioId === portfolioId));
-      return [...without, {
-        userId: user!.id,
-        portfolioId,
-        role,
-        invitedAt: new Date().toISOString().slice(0, 10),
-        invitedBy: CURRENT_USER.name,
-      }];
-    });
-  };
-
-  const handleChangeRole = (portfolioId: number, userId: number, newRole: PortfolioRole) => {
-    setAssignments(prev =>
-      prev.map(a => a.userId === userId && a.portfolioId === portfolioId ? { ...a, role: newRole } : a)
-    );
-  };
-
-  const handleRemoveUser = (portfolioId: number, userId: number) => {
-    setAssignments(prev => prev.filter(a => !(a.userId === userId && a.portfolioId === portfolioId)));
   };
 
   const handleLogoUpload = async (file: File) => {
@@ -699,10 +140,6 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     const dataUrl = await compressImageFile(file, { maxDimension: 320, quality: 0.85, targetMaxBytes: 40 * 1024, minQuality: 0.6, minDimension: 200 });
     setLogo(dataUrl);
   };
-
-  // ── Invite/Team targets ────────────────────────────────────────────────────
-  const invitePortfolio = portfolios.find(p => p.id === invitePortfolioId);
-  const teamPortfolio   = portfolios.find(p => p.id === teamPortfolioId);
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -736,6 +173,17 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
           </div>
 
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onOpenAdmin}
+                className="h-8 gap-1.5 text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/[0.06]"
+                data-testid="button-open-admin"
+              >
+                <Shield className="w-3.5 h-3.5" />Admin
+              </Button>
+            )}
             <button
               onClick={toggle}
               className="w-8 h-8 rounded-lg flex items-center justify-center transition-colors bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-900 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] dark:text-white/60 dark:hover:text-white"
@@ -747,25 +195,27 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 gap-2 text-slate-700 hover:text-slate-900 hover:bg-slate-100 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/[0.06]">
-                  <Avatar className="w-6 h-6"><AvatarFallback className="bg-blue-500 text-white text-xs font-bold">JW</AvatarFallback></Avatar>
-                  <span className="text-xs hidden sm:inline">Jordan Wade</span>
+                  <Avatar className="w-6 h-6"><AvatarFallback className="bg-blue-500 text-white text-xs font-bold">{initials}</AvatarFallback></Avatar>
+                  <span className="text-xs hidden sm:inline">{displayName}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuLabel>
-                  <p className="font-semibold">Jordan Wade</p>
-                  <p className="text-xs font-normal text-muted-foreground">jomwade13@icloud.com</p>
+                  <p className="font-semibold">{displayName}</p>
+                  <p className="text-xs font-normal text-muted-foreground">{session.user.email}</p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {isAdmin && (
+                  <DropdownMenuItem onClick={onOpenAdmin} data-testid="menu-admin">
+                    <Shield className="w-3.5 h-3.5 mr-2" />Admin Panel
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem><Settings className="w-3.5 h-3.5 mr-2" />Settings</DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setVersionHistoryOpen(true)}
-                  data-testid="menu-version-history"
-                >
+                <DropdownMenuItem onClick={() => setVersionHistoryOpen(true)} data-testid="menu-version-history">
                   <History className="w-3.5 h-3.5 mr-2" />Version History
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onLogout} className="text-red-500 focus:text-red-500">
+                <DropdownMenuItem onClick={onLogout} className="text-red-500 focus:text-red-500" data-testid="menu-logout">
                   <LogOut className="w-3.5 h-3.5 mr-2" />Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -780,15 +230,19 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
         <div className="flex items-start justify-between mb-8">
           <div>
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">Portfolios</h2>
-            <p className="text-sm text-slate-500 dark:text-white/40 mt-1">Select a portfolio to manage or create a new one</p>
+            <p className="text-sm text-slate-500 dark:text-white/40 mt-1">
+              {isAdmin ? 'Select a portfolio to manage or create a new one' : 'Select a portfolio to view'}
+            </p>
           </div>
-          <Button
-            onClick={() => setShowAddModal(true)}
-            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white shadow-lg shadow-blue-600/20 h-9 gap-2 text-xs"
-            data-testid="button-add-portfolio"
-          >
-            <Plus className="w-4 h-4" />Add New Portfolio
-          </Button>
+          {isAdmin && (
+            <Button
+              onClick={() => setShowAddModal(true)}
+              className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white shadow-lg shadow-blue-600/20 h-9 gap-2 text-xs"
+              data-testid="button-add-portfolio"
+            >
+              <Plus className="w-4 h-4" />Add New Portfolio
+            </Button>
+          )}
         </div>
 
         {/* Search */}
@@ -797,210 +251,88 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
             value={search}
             onChange={setSearch}
             items={searchSuggestions}
-            onSelect={(_id, item) => {
-              // For portfolios: set search to portfolio name. For leases: set to address/property so the user can pick.
-              setSearch(item.primary);
-            }}
-            placeholder="Search portfolios, clients, markets, or addresses…"
+            onSelect={(_id, item) => setSearch(item.primary)}
+            placeholder="Search portfolios, clients, or markets…"
             testIdPrefix="portal-search"
             maxResults={10}
           />
         </div>
 
         {/* Portfolio Grid */}
+        {filtered.length === 0 ? (
+          <div className="border-2 border-dashed border-slate-200 dark:border-white/[0.08] rounded-xl p-12 text-center">
+            <Briefcase className="w-10 h-10 mx-auto mb-3 text-slate-300 dark:text-white/20" />
+            <p className="text-sm font-medium text-slate-500 dark:text-white/40">
+              {isAdmin ? 'No portfolios yet. Create one to get started.' : 'No portfolios have been assigned to your account yet.'}
+            </p>
+            {!isAdmin && <p className="text-xs text-slate-400 dark:text-white/25 mt-1">Contact your administrator for access.</p>}
+          </div>
+        ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map(portfolio => {
-            const pUsers = getPortfolioUsers(portfolio.id);
-            const myRole = getCurrentUserRole(portfolio.id);
-            const canManage = myRole === 'owner' || myRole === 'editor';
-
-            return (
-              <div
-                key={portfolio.id}
-                className="relative group text-left bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-900/5 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] dark:border-white/[0.06] dark:hover:border-white/[0.12] dark:hover:shadow-lg dark:hover:shadow-black/20 rounded-xl transition-all duration-200 hover:-translate-y-0.5"
-                data-testid={`card-portfolio-${portfolio.id}`}
+          {filtered.map(portfolio => (
+            <div
+              key={portfolio.id}
+              className="relative group text-left bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 hover:shadow-xl hover:shadow-slate-900/5 dark:bg-white/[0.04] dark:hover:bg-white/[0.07] dark:border-white/[0.06] dark:hover:border-white/[0.12] dark:hover:shadow-lg dark:hover:shadow-black/20 rounded-xl transition-all duration-200 hover:-translate-y-0.5"
+              data-testid={`card-portfolio-${portfolio.id}`}
+            >
+              <button
+                onClick={() => onSelectPortfolio(portfolio)}
+                className="w-full text-left p-5 pb-3"
               >
-                {/* Owner-only actions menu */}
-                {myRole === 'owner' && (
-                  <div className="absolute top-3 right-3 z-20">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          onClick={e => e.stopPropagation()}
-                          className="w-7 h-7 rounded-md flex items-center justify-center bg-white/0 hover:bg-slate-100 text-slate-400 hover:text-slate-700 dark:hover:bg-white/[0.08] dark:text-white/40 dark:hover:text-white transition-colors"
-                          aria-label="Portfolio actions"
-                          data-testid={`button-portfolio-actions-${portfolio.id}`}
-                        >
-                          <MoreHorizontal className="w-4 h-4" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56" onClick={e => e.stopPropagation()}>
-                        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-white/40">Customize</DropdownMenuLabel>
-                        <label className="flex items-center w-full px-2 py-1.5 text-sm rounded-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-white/[0.06]">
-                          <Upload className="w-3.5 h-3.5 mr-2" />
-                          {portfolio.logo ? 'Replace logo' : 'Upload logo'}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={e => { const f = e.target.files?.[0]; if (f) handlePortfolioLogoUpload(portfolio.id, f); e.currentTarget.value = ''; }}
-                            data-testid={`input-portfolio-logo-${portfolio.id}`}
-                          />
-                        </label>
-                        {portfolio.logo && (
-                          <DropdownMenuItem onClick={() => handleRemovePortfolioLogo(portfolio.id)} data-testid={`button-remove-portfolio-logo-${portfolio.id}`}>
-                            <X className="w-3.5 h-3.5 mr-2" />Remove logo
-                          </DropdownMenuItem>
-                        )}
-                        <DropdownMenuSeparator />
-                        <DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-slate-500 dark:text-white/40">Card color</DropdownMenuLabel>
-                        <div className="grid grid-cols-4 gap-1.5 px-2 py-1.5">
-                          {PORTFOLIO_COLORS.map(c => (
-                            <button
-                              key={c}
-                              onClick={() => handleChangePortfolioColor(portfolio.id, c)}
-                              className={`w-7 h-7 rounded-md flex items-center justify-center transition-transform hover:scale-110 ${portfolio.color === c ? 'ring-2 ring-offset-2 ring-slate-900 dark:ring-white dark:ring-offset-[hsl(222,47%,13%)]' : ''}`}
-                              style={{ backgroundColor: c }}
-                              aria-label={`Set color ${c}`}
-                              data-testid={`button-portfolio-color-${portfolio.id}-${c}`}
-                            >
-                              {portfolio.color === c && <Check className="w-3.5 h-3.5 text-white" />}
-                            </button>
-                          ))}
-                        </div>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onClick={() => setDeletePortfolioId(portfolio.id)}
-                          className="text-red-500 dark:text-red-400 focus:text-red-500 dark:focus:text-red-400"
-                          data-testid={`button-delete-portfolio-${portfolio.id}`}
-                        >
-                          <Trash2 className="w-3.5 h-3.5 mr-2" />Delete portfolio
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                )}
-                {/* Clickable main area */}
-                <button
-                  onClick={() => onSelectPortfolio({ ...portfolio, userRole: myRole })}
-                  className="w-full text-left p-5 pb-3"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      {portfolio.logo ? (
-                        <div className="w-10 h-10 rounded-lg overflow-hidden bg-white border border-slate-200 dark:border-white/[0.06] flex items-center justify-center shrink-0">
-                          <img src={portfolio.logo} alt={`${portfolio.clientName} logo`} className="max-w-full max-h-full object-contain" />
-                        </div>
-                      ) : (
-                        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${portfolio.color}20` }}>
-                          <Briefcase className="w-5 h-5" style={{ color: portfolio.color }} />
-                        </div>
-                      )}
-                      <div className="min-w-0" onClick={e => e.stopPropagation()}>
-                        <h3 className="text-sm font-semibold text-slate-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-300 transition-colors truncate">
-                          <DoubleClickToEdit
-                            value={portfolio.name}
-                            onSave={v => handleUpdatePortfolioField(portfolio.id, 'name', v)}
-                            disabled={myRole !== 'owner'}
-                            ariaLabel="Portfolio name"
-                            testId={`portfolio-name-${portfolio.id}`}
-                          />
-                        </h3>
-                        <p className="text-xs text-slate-500 dark:text-white/40 truncate">
-                          <DoubleClickToEdit
-                            value={portfolio.clientName}
-                            onSave={v => handleUpdatePortfolioField(portfolio.id, 'clientName', v)}
-                            disabled={myRole !== 'owner'}
-                            ariaLabel="Client name"
-                            testId={`portfolio-client-${portfolio.id}`}
-                          />
-                        </p>
-                      </div>
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: `${portfolio.color}20` }}>
+                      <Briefcase className="w-5 h-5" style={{ color: portfolio.color }} />
                     </div>
-                    <div className={`flex items-center gap-2 shrink-0 ${myRole === 'owner' ? 'pr-8' : ''}`}>
-                      {getRoleBadge(myRole)}
-                      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 dark:text-white/20 dark:group-hover:text-white/50 group-hover:translate-x-0.5 transition-all" />
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-semibold text-slate-900 group-hover:text-blue-600 dark:text-white dark:group-hover:text-blue-300 transition-colors truncate">
+                        {portfolio.name}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-white/40 truncate">{portfolio.clientName}</p>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="flex items-center gap-1.5">
-                      <MapPin className="w-3 h-3 text-slate-400 dark:text-white/25" />
-                      <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.locations} locations</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Building2 className="w-3 h-3 text-slate-400 dark:text-white/25" />
-                      <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.totalSF}</span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <Clock className="w-3 h-3 text-slate-400 dark:text-white/25" />
-                      <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.lastUpdated}</span>
-                    </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {getRoleBadge(portfolio.userRole)}
+                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 dark:text-white/20 dark:group-hover:text-white/50 group-hover:translate-x-0.5 transition-all" />
                   </div>
-                </button>
-
-                {/* Team footer */}
-                <div className="flex items-center justify-between px-5 py-2.5 border-t border-slate-200 dark:border-white/[0.04]">
-                  <div className="flex items-center gap-1">
-                    {/* Avatar stack */}
-                    <div className="flex -space-x-1.5">
-                      {pUsers.slice(0, 4).map(u => (
-                        <Tooltip key={u.id}>
-                          <TooltipTrigger asChild>
-                            <div className="w-6 h-6 rounded-full border-2 border-white dark:border-[hsl(222,47%,13%)] flex items-center justify-center text-[9px] font-bold text-white" style={{ backgroundColor: u.color }}>
-                              {u.initials}
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom" className="text-[10px]">
-                            {u.name} — {ROLE_CONFIG[u.role].label}
-                          </TooltipContent>
-                        </Tooltip>
-                      ))}
-                      {pUsers.length > 4 && (
-                        <div className="w-6 h-6 rounded-full border-2 border-white bg-slate-100 text-slate-600 dark:border-[hsl(222,47%,13%)] dark:bg-white/10 dark:text-white/50 flex items-center justify-center text-[9px]">
-                          +{pUsers.length - 4}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={e => { e.stopPropagation(); setTeamPortfolioId(portfolio.id); }}
-                      className="ml-1 text-[10px] text-slate-500 hover:text-slate-800 dark:text-white/30 dark:hover:text-white/60 transition-colors"
-                      data-testid={`button-manage-team-${portfolio.id}`}
-                    >
-                      {pUsers.length} member{pUsers.length !== 1 ? 's' : ''}
-                    </button>
-                  </div>
-
-                  {canManage && (
-                    <button
-                      onClick={e => { e.stopPropagation(); setInvitePortfolioId(portfolio.id); }}
-                      className="flex items-center gap-1 text-[10px] text-blue-600 hover:text-blue-700 dark:text-blue-400/60 dark:hover:text-blue-400 transition-colors"
-                      data-testid={`button-invite-${portfolio.id}`}
-                    >
-                      <UserPlus className="w-3 h-3" />Invite
-                    </button>
-                  )}
                 </div>
-              </div>
-            );
-          })}
 
-          {/* Add New Card */}
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="border-2 border-dashed border-slate-200 hover:border-blue-400 dark:border-white/[0.08] dark:hover:border-blue-400/30 rounded-xl p-5 flex flex-col items-center justify-center min-h-[180px] transition-all duration-200 hover:bg-white/60 dark:hover:bg-white/[0.02] group"
-            data-testid="button-add-portfolio-card"
-          >
-            <div className="w-12 h-12 rounded-full bg-slate-100 group-hover:bg-blue-50 dark:bg-white/[0.04] dark:group-hover:bg-blue-500/10 flex items-center justify-center mb-3 transition-colors">
-              <Plus className="w-6 h-6 text-slate-400 group-hover:text-blue-600 dark:text-white/20 dark:group-hover:text-blue-400 transition-colors" />
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <MapPin className="w-3 h-3 text-slate-400 dark:text-white/25" />
+                    <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.market}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Building2 className="w-3 h-3 text-slate-400 dark:text-white/25" />
+                    <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.status}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3 h-3 text-slate-400 dark:text-white/25" />
+                    <span className="text-xs text-slate-600 dark:text-white/50">Active</span>
+                  </div>
+                </div>
+              </button>
             </div>
-            <p className="text-sm font-medium text-slate-500 group-hover:text-slate-700 dark:text-white/30 dark:group-hover:text-white/50 transition-colors">Add New Portfolio</p>
-            <p className="text-[10px] text-slate-400 dark:text-white/15 mt-1">Create a new client portfolio</p>
-          </button>
+          ))}
+
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="border-2 border-dashed border-slate-200 hover:border-blue-400 dark:border-white/[0.08] dark:hover:border-blue-400/30 rounded-xl p-5 flex flex-col items-center justify-center min-h-[180px] transition-all duration-200 hover:bg-white/60 dark:hover:bg-white/[0.02] group"
+              data-testid="button-add-portfolio-card"
+            >
+              <div className="w-12 h-12 rounded-full bg-slate-100 group-hover:bg-blue-50 dark:bg-white/[0.04] dark:group-hover:bg-blue-500/10 flex items-center justify-center mb-3 transition-colors">
+                <Plus className="w-6 h-6 text-slate-400 group-hover:text-blue-600 dark:text-white/20 dark:group-hover:text-blue-400 transition-colors" />
+              </div>
+              <p className="text-sm font-medium text-slate-500 group-hover:text-slate-700 dark:text-white/30 dark:group-hover:text-white/50 transition-colors">Add New Portfolio</p>
+              <p className="text-[10px] text-slate-400 dark:text-white/15 mt-1">Create a new client portfolio</p>
+            </button>
+          )}
         </div>
+        )}
       </div>
 
-      {/* Add Portfolio Modal */}
+      {/* Add Portfolio Modal (admin only) */}
       {showAddModal && (
         <Dialog open onOpenChange={() => setShowAddModal(false)}>
           <DialogContent className="max-w-md bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
@@ -1025,60 +357,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                 <Input placeholder="e.g. Southeast, National" value={newMarket} onChange={e => setNewMarket(e.target.value)}
                   className="h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-400 dark:bg-white/[0.06] dark:border-white/[0.1] dark:text-white dark:placeholder:text-white/25" data-testid="input-new-market" />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-600 dark:text-white/50">Portfolio Logo (optional)</label>
-                {newLogo ? (
-                  <div className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-white/[0.08] bg-slate-50 dark:bg-white/[0.04] p-2.5">
-                    <div className="w-12 h-12 rounded-md bg-white border border-slate-200 dark:border-white/[0.06] flex items-center justify-center overflow-hidden shrink-0">
-                      <img src={newLogo} alt="Portfolio logo preview" className="max-w-full max-h-full object-contain" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-slate-700 dark:text-white/70">Logo selected</p>
-                      <p className="text-[10px] text-slate-500 dark:text-white/40">Will appear on the portfolio card</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs text-slate-500 hover:text-red-500 dark:text-white/50 dark:hover:text-red-400"
-                      onClick={() => setNewLogo('')}
-                      data-testid="button-remove-new-portfolio-logo"
-                    >
-                      <X className="w-3 h-3 mr-1" />Remove
-                    </Button>
-                  </div>
-                ) : (
-                  <label
-                    htmlFor="new-portfolio-logo-input"
-                    className="flex items-center gap-3 rounded-lg border-2 border-dashed border-slate-200 dark:border-white/[0.1] hover:border-blue-400 dark:hover:border-blue-500/40 bg-slate-50/60 dark:bg-white/[0.02] p-3 cursor-pointer transition-colors"
-                    data-testid="label-new-portfolio-logo"
-                  >
-                    <div className="w-10 h-10 rounded-md bg-white border border-slate-200 dark:border-white/[0.06] flex items-center justify-center shrink-0">
-                      <ImageIcon className="w-4 h-4 text-slate-400 dark:text-white/40" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-slate-700 dark:text-white/70">Click to upload logo</p>
-                      <p className="text-[10px] text-slate-500 dark:text-white/40">PNG, JPG, or SVG · Recommended 200×200px</p>
-                    </div>
-                    <input
-                      id="new-portfolio-logo-input"
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      data-testid="input-new-portfolio-logo"
-                      onChange={async e => {
-                        const f = e.target.files?.[0];
-                        if (!f || !f.type.startsWith('image/')) return;
-                        const dataUrl = await compressImageFile(f, { maxDimension: 320, quality: 0.85, targetMaxBytes: 40 * 1024, minQuality: 0.6, minDimension: 200 });
-                        setNewLogo(dataUrl);
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/[0.06]" onClick={() => setShowAddModal(false)}>Cancel</Button>
                 <Button size="sm" className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white"
-                  onClick={handleAdd} disabled={!newName.trim()} data-testid="button-confirm-add-portfolio">
+                  onClick={handleAdd} disabled={!newName.trim() || createPortfolio.isPending} data-testid="button-confirm-add-portfolio">
                   <Plus className="w-3.5 h-3.5 mr-1.5" />Create Portfolio
                 </Button>
               </div>
@@ -1086,75 +368,6 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
           </DialogContent>
         </Dialog>
       )}
-
-      {/* Invite Modal */}
-      {invitePortfolio && (
-        <InviteModal
-          portfolioId={invitePortfolio.id}
-          portfolioName={invitePortfolio.name}
-          existingUserIds={new Set(getPortfolioAssignments(invitePortfolio.id).map(a => a.userId))}
-          users={users}
-          onInvite={(email, name, role) => handleInvite(invitePortfolio.id, email, name, role)}
-          onClose={() => setInvitePortfolioId(null)}
-        />
-      )}
-
-      {/* Manage Team Modal */}
-      {teamPortfolio && (
-        <ManageTeamModal
-          portfolioId={teamPortfolio.id}
-          portfolioName={teamPortfolio.name}
-          users={users}
-          assignments={assignments}
-          onChangeRole={(uid, role) => handleChangeRole(teamPortfolio.id, uid, role)}
-          onRemove={(uid) => handleRemoveUser(teamPortfolio.id, uid)}
-          onOpenInvite={() => setInvitePortfolioId(teamPortfolio.id)}
-          onClose={() => setTeamPortfolioId(null)}
-        />
-      )}
-
-      {/* Delete Portfolio Confirmation Modal */}
-      {deletePortfolioId !== null && (() => {
-        const target = portfolios.find(p => p.id === deletePortfolioId);
-        if (!target) return null;
-        return (
-          <Dialog open onOpenChange={() => setDeletePortfolioId(null)}>
-            <DialogContent className="max-w-md bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
-              <DialogHeader>
-                <DialogTitle className="text-slate-900 dark:text-white flex items-center gap-2">
-                  <Trash2 className="w-4 h-4 text-red-500 dark:text-red-400" />Delete Portfolio
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 mt-2">
-                <p className="text-sm text-slate-600 dark:text-white/70">
-                  Are you sure you want to delete <span className="font-semibold text-slate-900 dark:text-white">{target.name}</span>?
-                  This will remove the portfolio and all of its team assignments. This action cannot be undone.
-                </p>
-                <div className="rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-                  Portfolio data, team members, and access history will be permanently removed.
-                </div>
-                <div className="flex justify-end gap-2 pt-2">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/[0.06]"
-                    onClick={() => setDeletePortfolioId(null)}
-                    data-testid="button-cancel-delete-portfolio"
-                  >Cancel</Button>
-                  <Button
-                    size="sm"
-                    className="bg-red-600 hover:bg-red-500 text-white"
-                    onClick={() => handleDeletePortfolio(target.id)}
-                    data-testid="button-confirm-delete-portfolio"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete Portfolio
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        );
-      })()}
 
       {/* Footer */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/80 dark:border-white/[0.04] dark:bg-[hsl(222,47%,10%)]/80 backdrop-blur-sm py-3">

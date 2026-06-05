@@ -1,10 +1,19 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import createMemoryStore from "memorystore";
+import { randomBytes } from "crypto";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { configurePassport } from "./auth";
+import { ensureSchema } from "./db";
+import { bootstrapAdmin, seedPortfolios } from "./bootstrap";
+import { log } from "./log";
 import { createServer } from "http";
 
 const app = express();
 const httpServer = createServer(app);
+
+app.set("trust proxy", 1);
 
 declare module "http" {
   interface IncomingMessage {
@@ -22,16 +31,34 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
+const MemoryStore = createMemoryStore(session);
+let sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+  sessionSecret = randomBytes(32).toString("hex");
+  console.warn(
+    "[auth] SESSION_SECRET is not set — using a generated dev secret. " +
+      "Sessions will not survive restarts and will be invalid across instances. " +
+      "Set SESSION_SECRET in production.",
+  );
 }
+
+app.use(
+  session({
+    name: "connect.sid",
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store: new MemoryStore({ checkPeriod: 24 * 60 * 60 * 1000 }),
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  }),
+);
+
+configurePassport(app);
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -60,6 +87,10 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  ensureSchema();
+  await bootstrapAdmin();
+  seedPortfolios();
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

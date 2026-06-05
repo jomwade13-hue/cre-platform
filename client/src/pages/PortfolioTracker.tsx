@@ -5317,6 +5317,9 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
     submarket: row.parsed.submarket ?? '',
     floors: row.parsed.floors ?? '',
     broker: row.parsed.broker ?? '',
+    lat: row.parsed.lat ?? 0,
+    lng: row.parsed.lng ?? 0,
+    costarId: row.parsed.costarId ?? '',
   });
 
   return (
