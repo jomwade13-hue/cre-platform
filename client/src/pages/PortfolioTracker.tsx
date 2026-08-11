@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, createContext, useContext } from 'react';
 // wouter routing not used for tab navigation — hash is set directly
 import {
   Building2, Database, Activity, CalendarRange, FileBarChart,
@@ -8,7 +8,7 @@ import {
   MapPin, User, Layers, Camera, ImagePlus, HardHat, Filter,
   BarChart2, Calendar, Edit3, Trash2, DollarSign, Briefcase, Award, Flag, Diamond,
   Printer, Upload, Sun, Moon, ImageIcon, Share2, Link2, Copy, Check, TrendingUp, ShieldCheck, PieChart, ExternalLink,
-  FileUp, Table2, AlertTriangle, CheckCircle, XCircle, Grid3X3, ArrowRight, Save, FolderOpen, SlidersHorizontal, Eye, EyeOff
+  FileUp, Table2, AlertTriangle, CheckCircle, XCircle, Grid3X3, ArrowRight, Save, FolderOpen, SlidersHorizontal, Eye, EyeOff, ListChecks
 } from 'lucide-react';
 import { DecommissionChecklistModule, newDecomData, type DecomData } from '@/components/DecommissionChecklist';
 import { Badge } from '@/components/ui/badge';
@@ -49,6 +49,14 @@ import 'leaflet/dist/leaflet.css';
 
 const PROPERTY_TYPES = ['Office', 'Coworking', 'Broadcasting'];
 const CLIENT_LEADS   = ['Alisha Shields', 'Brittney McDonald', 'George Scott', 'Keith Swartzentruber', 'Kim Boren', 'Kristine Schroeder', 'Matt Epperson', 'Sarah Stieferman', 'Travis Hilty'];
+
+// Per-portfolio lead roster. The original Learfield portfolio keeps its team;
+// new portfolios start with a BLANK roster and names are added as needed.
+const LeadsContext = createContext<{ leads: string[]; addLead: (name: string) => void }>({
+  leads: CLIENT_LEADS,
+  addLead: () => {},
+});
+const useLeads = () => useContext(LeadsContext);
 const STATUSES       = ['—', 'Active Disposition', 'Active Initiative', 'Inactive', 'Archive'];
 const STRATEGIES     = [
   '—', 'Close', 'Maintain / Renew', 'New Project', 'Project Management',
@@ -74,13 +82,6 @@ const STATUS_STYLES: Record<string, string> = {
   'Active Initiative':  'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400',
   'Inactive':           'bg-gray-100  text-gray-600  dark:bg-gray-800     dark:text-gray-400',
   'Archive':            'bg-slate-100 text-slate-500 dark:bg-slate-900/30 dark:text-slate-500',
-};
-
-const PRIORITY_STYLES: Record<string, string> = {
-  'Critical': 'bg-red-100    text-red-800    dark:bg-red-900/30    dark:text-red-400',
-  'High':     'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400',
-  'Medium':   'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400',
-  'Low':      'bg-gray-100   text-gray-700   dark:bg-gray-800      dark:text-gray-400',
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -109,9 +110,56 @@ const fmtDateShort = (d: string) => {
   return `${m}/${day}/${y}`;
 };
 
+// ── Saved default column views ───────────────────────────────────────────────
+// Each tab's column picker can save the current selection as that tab's
+// default view. Stored per tab so it survives reloads and app updates.
+function readDefaultCols(tabKey: string): Set<string> | null {
+  try {
+    const raw = localStorage.getItem(`cre_default_cols_${tabKey}`);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length > 0 ? new Set(arr as string[]) : null;
+  } catch { return null; }
+}
+function writeDefaultCols(tabKey: string, cols: Set<string>): void {
+  try { localStorage.setItem(`cre_default_cols_${tabKey}`, JSON.stringify([...cols])); } catch { /* noop */ }
+}
+function clearDefaultCols(tabKey: string): void {
+  try { localStorage.removeItem(`cre_default_cols_${tabKey}`); } catch { /* noop */ }
+}
+
+// ── Tracked categories (per-portfolio field configuration) ───────────────────
+// Set when a portfolio is created. Drives the Leases tab's default columns,
+// custom columns, and the mass-import field list — in the configured order.
+export interface TrackedField { key: string; label: string; custom?: boolean }
+
+function readTrackedFields(portfolioId: number): TrackedField[] | null {
+  try {
+    const key = portfolioId === 1 ? 'cre_tracked_fields' : `cre_tracked_fields__p${portfolioId}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) && arr.length > 0 ? arr : null;
+  } catch { return null; }
+}
+
+// Lease-record keys → Leases-table column keys (where they differ)
+const FIELD_TO_COLUMN_KEY: Record<string, string> = {
+  lat: 'latitude', lng: 'longitude', leaseEnd: 'expiration',
+};
+const fieldToColKey = (k: string) => FIELD_TO_COLUMN_KEY[k] ?? k;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type LeaseRecord = typeof leasesInit[0];
+type LeaseRecord = typeof leasesInit[0] & {
+  /**
+   * Optional extra workflow memberships. A location normally appears in Active
+   * Initiatives via its Status and in Project Management via its Strategy —
+   * `tracks` lets it ALSO live in the other view at the same time, as one
+   * consolidated record with separate note streams.
+   */
+  tracks?: ('Active Initiative' | 'Project Management')[];
+};
 
 interface Milestone {
   id: number;
@@ -185,6 +233,84 @@ function SelectCell({ value, options, onChange, colorMap, disabled }: {
 }
 
 // ── Document icon helper ───────────────────────────────────────────────────────
+
+// ── QuickNoteCell — Last Note cell with inline note capture ──────────────────
+// Shows the latest note for the row's workflow and lets the user log a new
+// note without opening the building profile. New notes are written straight
+// into the property's note history (tagged with the view's workflow track).
+function QuickNoteCell({ lastNote, onAdd, readOnly, trackLabel }: {
+  lastNote?: LeaseNote;
+  onAdd: (text: string) => void;
+  readOnly?: boolean;
+  trackLabel?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+
+  const save = () => {
+    const t = text.trim();
+    if (!t) return;
+    onAdd(t);
+    setText('');
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="space-y-1.5" onClick={e => e.stopPropagation()}>
+        <textarea
+          autoFocus
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save(); }
+            if (e.key === 'Escape') { setEditing(false); setText(''); }
+          }}
+          placeholder={trackLabel ? `Add ${trackLabel} note…` : 'Add note…'}
+          rows={2}
+          className="w-full text-xs bg-background border border-primary/50 focus:border-primary focus:outline-none rounded-md px-2 py-1.5 resize-y min-h-[44px] leading-snug"
+          data-testid="quick-note-input"
+        />
+        <div className="flex items-center gap-1.5">
+          <button onClick={save} disabled={!text.trim()}
+            className="px-2 py-0.5 rounded text-[10px] font-semibold bg-primary text-primary-foreground disabled:opacity-40"
+            data-testid="quick-note-save">Save</button>
+          <button onClick={() => { setEditing(false); setText(''); }}
+            className="px-2 py-0.5 rounded text-[10px] text-muted-foreground hover:bg-muted">Cancel</button>
+          <span className="text-[9px] text-muted-foreground/60 ml-auto hidden lg:inline">Enter to save</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-0.5">
+      {lastNote ? (
+        <>
+          <p className="text-xs leading-snug whitespace-normal break-words">{lastNote.text}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {lastNote.author} · {lastNote.date}
+            {lastNote.track && (
+              <span className={`ml-1.5 inline-flex px-1 py-px rounded text-[9px] font-medium ${lastNote.track === 'Project Mgmt' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}`}>{lastNote.track}</span>
+            )}
+          </p>
+        </>
+      ) : (
+        <span className="text-xs text-muted-foreground italic">—</span>
+      )}
+      {!readOnly && (
+        <button
+          onClick={e => { e.stopPropagation(); setEditing(true); }}
+          className="opacity-60 hover:opacity-100 transition-opacity inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+          data-testid="quick-note-add"
+          title={trackLabel ? `Log a ${trackLabel} note for this property` : 'Log a note for this property'}
+        >
+          <Plus className="w-2.5 h-2.5" />Add note
+        </button>
+      )}
+    </div>
+  );
+}
 
 function DocIcon({ type }: { type: string }) {
   if (type === 'PDF')   return <FileText className="w-4 h-4 text-red-500 shrink-0" />;
@@ -260,14 +386,15 @@ function placeholderGradient(label: string, category: string) {
 // ── Building Profile Modal ────────────────────────────────────────────────────
 
 function BuildingProfileModal({
-  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onRemoveDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone, onToggleMilestone
+  lease, notes, documents, photos, clientLogo, onAddNote, onAddDocument, onRemoveDocument, onAddPhoto, onRemovePhoto, onSetClientLogo, onClose, onUpdate, onAddToQBR, qbrEntries, milestones, onAddMilestone, onRemoveMilestone, onToggleMilestone, currentUserName = 'Jordan Wade'
 }: {
   lease: LeaseRecord;
   notes: LeaseNote[];
   documents: LeaseDocument[];
   photos: LeasePhoto[];
   clientLogo: string;
-  onAddNote: (text: string, author: string) => void;
+  onAddNote: (text: string, author: string, track?: 'Initiative' | 'Project Mgmt') => void;
+  currentUserName?: string;
   onAddDocument: (doc: Omit<LeaseDocument, 'id'>) => void;
   onRemoveDocument: (docId: number) => void;
   onAddPhoto: (label: string, category: LeasePhoto['category'], url: string) => void;
@@ -282,13 +409,116 @@ function BuildingProfileModal({
   onRemoveMilestone: (milestoneId: number) => void;
   onToggleMilestone: (milestoneId: number) => void;
 }) {
+  const { leads: LEADS } = useLeads();
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [newNote, setNewNote]         = useState('');
-  const [noteAuthor, setNoteAuthor]   = useState('Jordan Wade');
+  const [noteAuthor, setNoteAuthor]   = useState(currentUserName);
+  const [noteTrack, setNoteTrack]     = useState<'General' | 'Initiative' | 'Project Mgmt'>('General');
   const [showAddPhoto, setShowAddPhoto] = useState(false);
   const [newPhotoLabel, setNewPhotoLabel] = useState('');
   const [newPhotoCat, setNewPhotoCat] = useState<LeasePhoto['category']>('building');
   const [newPhotoUrl, setNewPhotoUrl] = useState('');
+
+  // ── Building report: photo + details + milestones + full note history ──────
+  const printBuildingReport = () => {
+    const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const w = window.open('', '_blank');
+    if (!w) return;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const reportDate = new Date().toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const heroPhoto = photos.find(ph => ph.category === 'building' && ph.url) ?? photos.find(ph => ph.url);
+    const stages = STRATEGY_STAGES[lease.strategy] ?? [];
+    const progress = calcProgress(stages, lease.stage);
+    const twLogo = `${window.location.origin}/transwestern-logo-primary.png`;
+    const sortedMs = [...milestones].sort((a, b) => a.date < b.date ? -1 : 1);
+    const msStatus = (m: Milestone) => {
+      if (m.completed) return ['Completed', '#16A34A'];
+      if (m.date < todayStr) return ['Overdue', '#DC2626'];
+      const days = Math.ceil((new Date(m.date).getTime() - Date.now()) / 86400000);
+      return days <= 14 ? ['At Risk', '#EA580C'] : ['Upcoming', '#2563EB'];
+    };
+    const trackBadge = (t?: string) => t
+      ? `<span style="font-size:10px;font-weight:600;padding:1px 7px;border-radius:9px;background:${t === 'Project Mgmt' ? '#F5EFFB' : '#E1F5EE'};color:${t === 'Project Mgmt' ? '#7A39BB' : '#0F6E56'}">${esc(t)}</span>`
+      : '';
+    const detail = (label: string, value: string) =>
+      `<div><p style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:0.04em">${label}</p><p style="font-size:13px;font-weight:600;margin-top:1px">${value || '—'}</p></div>`;
+    const html = `<!DOCTYPE html><html><head><title>${esc(lease.tenant)} — Building Report</title>
+      <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        @page { size: letter portrait; margin: 14mm; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#1a1a1a; padding:32px; }
+        .tw-print-logo { display:none; }
+        @media print {
+          body { padding:0; padding-top:34px; }
+          .tw-print-logo { display:block; position:fixed; top:0; right:0; height:26px; z-index:999; }
+          .card { page-break-inside: avoid; }
+        }
+      </style></head><body>
+      <img class="tw-print-logo" src="${twLogo}" alt="Transwestern" />
+      <div style="border-bottom:2px solid #2563eb;padding-bottom:14px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-start">
+        <div style="display:flex;align-items:center;gap:12px">
+          ${clientLogo ? `<img src="${clientLogo}" alt="" style="height:34px;max-width:150px;object-fit:contain" />` : ''}
+          <div>
+            <p style="font-size:20px;font-weight:700">${esc(lease.tenant)} — ${esc(lease.property)}</p>
+            <p style="font-size:12px;color:#6b7280">${esc(lease.address || '')}</p>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <p style="font-size:13px;font-weight:700">Building Report</p>
+          <p style="font-size:11px;color:#6b7280">${reportDate}</p>
+        </div>
+      </div>
+      ${heroPhoto ? `<div class="card" style="margin-bottom:18px"><img src="${heroPhoto.url}" alt="${esc(heroPhoto.label)}" style="width:100%;max-height:340px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb" /><p style="font-size:10px;color:#6b7280;margin-top:4px">${esc(heroPhoto.label)}</p></div>` : ''}
+      <div class="card" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-bottom:18px;background:#f9fafb">
+        ${detail('Status', esc(lease.status))}
+        ${detail('Strategy', esc(lease.strategy))}
+        ${detail('Stage', esc(lease.stage))}
+        ${detail('Progress', progress + '%')}
+        ${detail('Square Feet', lease.sqft ? lease.sqft.toLocaleString() : '—')}
+        ${detail('Lease Start', lease.leaseStart ? fmtDateShort(lease.leaseStart) : '—')}
+        ${detail('Lease Expiration', fmtDateShort(lease.leaseEnd))}
+        ${detail('Client Lead', esc(lease.clientLead))}
+        ${detail('Market', esc(lease.market || '—'))}
+        ${detail('Submarket', esc(lease.submarket || '—'))}
+        ${detail('Floors', esc((lease as any).floors || '—'))}
+        ${detail('Broker', esc((lease as any).broker || '—'))}
+      </div>
+      <div class="card" style="margin-bottom:18px">
+        <p style="font-size:13px;font-weight:700;border-bottom:2px solid #2563eb;padding-bottom:6px;margin-bottom:10px">Milestones (${sortedMs.length})</p>
+        ${sortedMs.length === 0 ? '<p style="font-size:12px;color:#6b7280">No milestones logged.</p>' : `
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="text-align:left;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:0.04em">
+            <th style="padding:4px 8px 6px 0;border-bottom:1px solid #e5e7eb">Milestone</th>
+            <th style="padding:4px 8px 6px 0;border-bottom:1px solid #e5e7eb;width:110px">Date</th>
+            <th style="padding:4px 0 6px 0;border-bottom:1px solid #e5e7eb;width:90px">Status</th>
+          </tr></thead>
+          <tbody>${sortedMs.map(m => {
+            const [label, color] = msStatus(m);
+            return `<tr>
+              <td style="padding:6px 8px 6px 0;border-bottom:1px solid #f3f4f6">${esc(m.label)}</td>
+              <td style="padding:6px 8px 6px 0;border-bottom:1px solid #f3f4f6;white-space:nowrap">${fmtDateShort(m.date)}</td>
+              <td style="padding:6px 0;border-bottom:1px solid #f3f4f6"><span style="font-size:10px;font-weight:600;color:${color}">${label}</span></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>`}
+      </div>
+      <div>
+        <p style="font-size:13px;font-weight:700;border-bottom:2px solid #2563eb;padding-bottom:6px;margin-bottom:10px">Notes (${notes.length})</p>
+        ${notes.length === 0 ? '<p style="font-size:12px;color:#6b7280">No notes logged.</p>' : notes.map(n => `
+          <div class="card" style="border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;margin-bottom:8px;background:#f9fafb">
+            <p style="font-size:11px;color:#6b7280;margin-bottom:3px"><strong style="color:#1a1a1a">${esc(n.author)}</strong> · ${fmtDateShort(n.date)} ${trackBadge(n.track)}</p>
+            <p style="font-size:13px;line-height:1.55">${esc(n.text)}</p>
+          </div>`).join('')}
+      </div>
+      <div style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:16px;text-align:center">
+        <p style="font-size:10px;color:#6b7280">${esc(lease.tenant)} — ${esc(lease.property)} · Confidential · ${reportDate}</p>
+      </div>
+      </body></html>`;
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => { w.print(); }, 500);
+  };
+
   const handlePhotoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -404,6 +634,12 @@ function BuildingProfileModal({
             <button onClick={() => setShowAddPhoto(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur text-white text-xs font-medium transition-colors">
               <ImagePlus className="w-3.5 h-3.5" />Add Photo
+            </button>
+            <button onClick={printBuildingReport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur text-white text-xs font-medium transition-colors"
+              title="Print a full report for this building — photo, details, milestones, and all notes"
+              data-testid="button-print-building-report">
+              <Printer className="w-3.5 h-3.5" />Print Report
             </button>
           </div>
         </div>
@@ -553,7 +789,7 @@ function BuildingProfileModal({
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {[
                   { label: 'Type',        field: 'type',       options: PROPERTY_TYPES },
-                  { label: 'Client Lead', field: 'clientLead', options: CLIENT_LEADS },
+                  { label: 'Client Lead', field: 'clientLead', options: LEADS },
                   { label: 'Status',      field: 'status',     options: STATUSES },
                   { label: 'Strategy',    field: 'strategy',   options: STRATEGIES },
                 ].map(({ label, field, options }) => (
@@ -1047,12 +1283,51 @@ function BuildingProfileModal({
             )}
           </div>
 
+          {/* ─── Workflow tracks — one record, multiple workflows ─── */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Workflow Tracks</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {([['Active Initiative', 'Active Initiatives'], ['Project Management', 'Project Management']] as const).map(([trackKey, label]) => {
+                const viaField = trackKey === 'Active Initiative'
+                  ? (lease.status === 'Active Initiative' || lease.status === 'Active Disposition')
+                  : lease.strategy === 'Project Management';
+                const tracks = (lease.tracks ?? []) as string[];
+                const viaTrack = tracks.includes(trackKey);
+                const active = viaField || viaTrack;
+                return (
+                  <button
+                    key={trackKey}
+                    type="button"
+                    disabled={viaField}
+                    onClick={() => {
+                      if (viaField) return;
+                      const next = viaTrack ? tracks.filter(t => t !== trackKey) : [...tracks, trackKey];
+                      onUpdate({ ...lease, tracks: next } as LeaseRecord);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-medium transition-colors ${active
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border bg-muted/30 text-muted-foreground hover:border-primary/40 hover:text-primary'}`}
+                    title={viaField
+                      ? `Included via its ${trackKey === 'Active Initiative' ? 'Status' : 'Strategy'} — always on`
+                      : viaTrack ? `Remove from ${label}` : `Also show this property in ${label}`}
+                    data-testid={`track-toggle-${trackKey === 'Active Initiative' ? 'ai' : 'pm'}`}
+                  >
+                    {active ? <Check className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                    {label}
+                    {viaField && <span className="text-[9px] opacity-60">(via {trackKey === 'Active Initiative' ? 'status' : 'strategy'})</span>}
+                  </button>
+                );
+              })}
+              <span className="text-[10px] text-muted-foreground ml-1">This property can live in both views at once — each keeps its own note stream below.</span>
+            </div>
+          </div>
+
           {/* ─── Notes (inline, always visible) ─── */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground mb-3">Notes ({notes.length})</p>
 
             {/* Add note form */}
-            <div className="flex gap-2 mb-3">
+            <div className="flex gap-2 mb-2">
               <Textarea
                 placeholder="Add a note…"
                 value={newNote}
@@ -1063,10 +1338,25 @@ function BuildingProfileModal({
               <div className="flex flex-col gap-1.5 shrink-0">
                 <Input placeholder="Name" value={noteAuthor} onChange={e => setNoteAuthor(e.target.value)} className="h-7 text-xs w-28" />
                 <Button size="sm" className="h-7 text-xs" disabled={!newNote.trim()}
-                  onClick={() => { if (newNote.trim()) { onAddNote(newNote.trim(), noteAuthor); setNewNote(''); } }}>
+                  onClick={() => { if (newNote.trim()) { onAddNote(newNote.trim(), noteAuthor, noteTrack === 'General' ? undefined : noteTrack); setNewNote(''); } }}>
                   Save
                 </Button>
               </div>
+            </div>
+            {/* Note stream selector */}
+            <div className="flex items-center gap-1 mb-3">
+              <span className="text-[10px] text-muted-foreground mr-1">Log to:</span>
+              {(['General', 'Initiative', 'Project Mgmt'] as const).map(t => (
+                <button key={t} type="button" onClick={() => setNoteTrack(t)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${noteTrack === t
+                    ? t === 'Project Mgmt' ? 'border-purple-400/50 bg-purple-500/10 text-purple-600 dark:text-purple-400'
+                      : t === 'Initiative' ? 'border-emerald-400/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                      : 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:text-foreground'}`}
+                  data-testid={`note-track-${t.toLowerCase().replace(' ', '-')}`}>
+                  {t}
+                </button>
+              ))}
             </div>
 
             {/* Notes list */}
@@ -1079,6 +1369,9 @@ function BuildingProfileModal({
                     <div className="flex items-center justify-between mb-1">
                       <span className="flex items-center gap-1.5 text-xs font-semibold">
                         <User className="w-3 h-3" />{note.author}
+                        {note.track && (
+                          <span className={`px-1.5 py-px rounded-full text-[9px] font-medium ${note.track === 'Project Mgmt' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'}`}>{note.track}</span>
+                        )}
                       </span>
                       <span className="text-[10px] text-muted-foreground">{note.date}</span>
                     </div>
@@ -1420,7 +1713,7 @@ function PortfolioMap({ leases: allLeases, onViewProfile, mapStyle = 'grey', sta
   );
 }
 
-function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMassDelete, onAddProperty, readOnly }: {
+function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMassDelete, onAddProperty, readOnly, trackedFields }: {
   data: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   onUpdate: (l: LeaseRecord) => void;
@@ -1429,7 +1722,9 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
   onMassDelete?: () => void;
   onAddProperty?: () => void;
   readOnly?: boolean;
+  trackedFields?: TrackedField[] | null;
 }) {
+  const { leads: LEADS } = useLeads();
   const [search, setSearch]           = useState('');
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter]   = useState<Set<string>>(new Set());
@@ -1492,10 +1787,44 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
   const ALL_COL_KEYS = LEASE_COLUMNS.map(c => c.key);
   // Hide advanced columns by default but keep them available via column picker.
   const ADVANCED_COL_KEYS = new Set<string>(['leaseStart', 'sqft', 'rentPSF', 'totalRent', 'market', 'submarket', 'broker', 'floors', 'latitude', 'longitude', 'costarId', 'recordId']);
-  const DEFAULT_COL_KEYS = ALL_COL_KEYS.filter(k => !ADVANCED_COL_KEYS.has(k));
+  // Custom categories configured for this portfolio become real editable columns.
+  const customFields = useMemo(() => (trackedFields ?? []).filter(f => f.custom), [trackedFields]);
+  // Picker order + default visibility follow the portfolio's tracked-category
+  // configuration when one exists; otherwise the built-in defaults apply.
+  const configuredColKeys = useMemo(() => {
+    if (!trackedFields || trackedFields.length === 0) return null;
+    const keys = trackedFields.map(f => f.custom ? f.key : fieldToColKey(f.key)).filter(k => k === 'expiration' || ALL_COL_KEYS.includes(k as any) || k.startsWith('custom_'));
+    if (!keys.includes('lastNote')) keys.push('lastNote');
+    return keys;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedFields]);
+  const PICKER_COLUMNS = useMemo(() => {
+    const std = new Map(LEASE_COLUMNS.map(c => [c.key as string, c.label as string]));
+    customFields.forEach(cf => std.set(cf.key, cf.label));
+    if (!configuredColKeys) return LEASE_COLUMNS.map(c => ({ key: c.key as string, label: c.label as string }));
+    const ordered: { key: string; label: string }[] = [];
+    configuredColKeys.forEach(k => { if (std.has(k)) { ordered.push({ key: k, label: std.get(k)! }); std.delete(k); } });
+    std.forEach((label, key) => ordered.push({ key, label }));
+    return ordered;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configuredColKeys, customFields]);
+  const DEFAULT_COL_KEYS = configuredColKeys ?? ALL_COL_KEYS.filter(k => !ADVANCED_COL_KEYS.has(k));
   const [visibleCols, setVisibleCols] = useState<Set<string>>(
-    () => new Set(DEFAULT_COL_KEYS)
+    () => readDefaultCols('leases') ?? new Set(DEFAULT_COL_KEYS)
   );
+  const [hasDefaultView, setHasDefaultView] = useState<boolean>(() => readDefaultCols('leases') !== null);
+  const [defaultJustSaved, setDefaultJustSaved] = useState(false);
+  const saveDefaultView = () => {
+    writeDefaultCols('leases', visibleCols);
+    setHasDefaultView(true);
+    setDefaultJustSaved(true);
+    setTimeout(() => setDefaultJustSaved(false), 1800);
+  };
+  const clearDefaultView = () => {
+    clearDefaultCols('leases');
+    setHasDefaultView(false);
+    setVisibleCols(new Set(DEFAULT_COL_KEYS));
+  };
   const toggleCol = (key: string) => setVisibleCols(prev => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -1537,8 +1866,20 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
     setActiveLayoutName(null);
   };
 
+  // Archive + On-Campus locations are hidden by default; a toggle reveals them.
+  const [showHiddenLocations, setShowHiddenLocations] = useState(false);
+  const isHiddenByDefault = (l: LeaseRecord) => l.status === 'Archive' || l.property === 'On-Campus';
+  const hiddenCount = useMemo(() => data.filter(isHiddenByDefault).length, [data]);
+  // Lease expirations within 12 months show in red.
+  const expRedCutoff = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + 12);
+    return d.toISOString().slice(0, 10);
+  }, []);
+
   const filtered = useMemo(() => {
     let d = [...data];
+    if (!showHiddenLocations) d = d.filter(l => !isHiddenByDefault(l));
     if (search) {
       const q = search.toLowerCase();
       d = d.filter(l =>
@@ -1555,7 +1896,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
       return sort.dir === 'asc' ? v : -v;
     });
     return d;
-  }, [data, search, statusFilter, typeFilter, leadFilter, sort]);
+  }, [data, search, statusFilter, typeFilter, leadFilter, sort, showHiddenLocations]);
 
   const totalSqft   = filtered.reduce((s, l) => s + l.sqft, 0);
   const totalRent   = filtered.reduce((s, l) => s + l.totalRent, 0);
@@ -1799,7 +2140,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm" className={cn('h-8 w-[130px] text-xs justify-between font-normal', leadFilter.size > 0 && 'border-primary/50 text-primary')}>
-              {filterLabel(leadFilter, 'All Leads', CLIENT_LEADS)}
+              {filterLabel(leadFilter, 'All Leads', LEADS)}
               <ChevronDown className="w-3.5 h-3.5 opacity-50 ml-1" />
             </Button>
           </PopoverTrigger>
@@ -1808,7 +2149,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
               <p className="text-xs font-semibold text-muted-foreground">Lead</p>
               {leadFilter.size > 0 && <button className="text-[10px] text-primary hover:underline" onClick={() => setLeadFilter(new Set())}>Clear</button>}
             </div>
-            {CLIENT_LEADS.map(l => (
+            {LEADS.map(l => (
               <label key={l} className="flex items-center gap-2 px-1 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm">
                 <Checkbox checked={leadFilter.has(l)} onCheckedChange={() => toggleFilter(leadFilter, l, setLeadFilter)} className="h-4 w-4" />
                 {l}
@@ -1828,17 +2169,28 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
             <Button variant={activeLayoutName === null ? 'default' : 'outline'} size="sm" className="h-7 text-[10px] px-2" onClick={resetToDefault}>All</Button>
           </div>
         )}
+        {/* Hidden locations toggle (Archive + On-Campus) */}
+        {hiddenCount > 0 && (
+          <Button variant="outline" size="sm"
+            className={cn('h-8 gap-1.5 text-xs', showHiddenLocations && 'border-primary/50 text-primary', savedLayouts.length === 0 && 'ml-auto')}
+            onClick={() => setShowHiddenLocations(v => !v)}
+            title={showHiddenLocations ? 'Hide Archive and On-Campus locations' : 'Show Archive and On-Campus locations'}
+            data-testid="button-toggle-hidden-locations">
+            {showHiddenLocations ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {showHiddenLocations ? 'Hide' : 'Show'} Archive / On-Campus ({hiddenCount})
+          </Button>
+        )}
         {/* Column Toggle */}
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className={cn('h-8 gap-1.5 text-xs', savedLayouts.length === 0 && 'ml-auto')}>
+            <Button variant="outline" size="sm" className={cn('h-8 gap-1.5 text-xs', savedLayouts.length === 0 && hiddenCount === 0 && 'ml-auto')}>
               <SlidersHorizontal className="w-3.5 h-3.5" />Columns
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-64 p-0" align="end">
             <div className="p-2 border-b border-border">
               <p className="text-xs font-semibold text-muted-foreground px-1 mb-1">Toggle Columns</p>
-              {LEASE_COLUMNS.map(col => (
+              {PICKER_COLUMNS.map(col => (
                 <label key={col.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted/50 cursor-pointer text-sm">
                   <Checkbox checked={isColVisible(col.key)} onCheckedChange={() => { toggleCol(col.key); setActiveLayoutName(null); }} className="h-4 w-4" />
                   {col.label}
@@ -1879,6 +2231,19 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
               {activeLayoutName && (
                 <Button variant="ghost" size="sm" className="h-7 w-full text-xs gap-1 justify-start text-muted-foreground" onClick={resetToDefault}>
                   Reset to All Columns
+                </Button>
+              )}
+            </div>
+            {/* Default view */}
+            <div className="p-2 border-t border-border space-y-1">
+              <p className="text-xs font-semibold text-muted-foreground px-1">Default View</p>
+              <Button variant="ghost" size="sm" className="h-7 w-full text-xs gap-1.5 justify-start" onClick={saveDefaultView} data-testid="save-default-view-leases">
+                {defaultJustSaved ? <Check className="w-3 h-3 text-green-500" /> : <Save className="w-3 h-3" />}
+                {defaultJustSaved ? 'Saved — opens this way now' : 'Save as default view'}
+              </Button>
+              {hasDefaultView && !defaultJustSaved && (
+                <Button variant="ghost" size="sm" className="h-7 w-full text-xs gap-1.5 justify-start text-muted-foreground" onClick={clearDefaultView} data-testid="clear-default-view-leases">
+                  <X className="w-3 h-3" />Clear saved default
                 </Button>
               )}
             </div>
@@ -1938,6 +2303,9 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                 {isColVisible('longitude') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Longitude</th>}
                 {isColVisible('costarId') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">CoStar ID</th>}
                 {isColVisible('recordId') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Record ID</th>}
+                {customFields.map(cf => isColVisible(cf.key) && (
+                  <th key={cf.key} className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">{cf.label}</th>
+                ))}
                 {isColVisible('lastNote') && <th className="px-3 py-2.5 text-left font-semibold whitespace-nowrap">Last Note</th>}
               </tr>
             </thead>
@@ -1990,7 +2358,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                   </td>}
                   {/* Client Lead */}
                   {isColVisible('clientLead') && <td className="px-1 py-1.5 min-w-[100px]">
-                    <SelectCell value={l.clientLead} options={CLIENT_LEADS} onChange={v => handleFieldUpdate(l, 'clientLead', v)} disabled={readOnly} />
+                    <SelectCell value={l.clientLead} options={LEADS} onChange={v => handleFieldUpdate(l, 'clientLead', v)} disabled={readOnly} />
                   </td>}
                   {/* Status */}
                   {isColVisible('status') && <td className="px-1 py-1.5 min-w-[160px]">
@@ -2006,7 +2374,7 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     />
                   </td>}
                   {/* Expiration */}
-                  {isColVisible('expiration') && <td className="px-3 py-2.5 tabular-nums whitespace-nowrap font-medium text-xs">
+                  {isColVisible('expiration') && <td className={cn('px-3 py-2.5 tabular-nums whitespace-nowrap font-medium text-xs', l.leaseEnd && l.leaseEnd <= expRedCutoff && 'text-red-600 dark:text-red-400')}>
                     <DoubleClickToEdit
                       type="date"
                       value={l.leaseEnd}
@@ -2180,6 +2548,17 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
                     />
                   </td>}
                   {/* Last Note */}
+                  {customFields.map(cf => isColVisible(cf.key) && (
+                    <td key={cf.key} className="px-2 py-1.5 min-w-[130px]">
+                      <DoubleClickToEdit
+                        value={String((l as any)[cf.key] ?? '')}
+                        onSave={v => onUpdate({ ...(l as any), [cf.key]: v } as LeaseRecord)}
+                        disabled={readOnly}
+                        ariaLabel={cf.label}
+                        testId={`custom-field-${cf.key}-${l.id}`}
+                      />
+                    </td>
+                  ))}
                   {isColVisible('lastNote') && <td className="px-3 py-2.5 min-w-[280px]">
                     {(() => {
                       const latest = (notes[l.id] ?? [])[0];
@@ -2208,10 +2587,12 @@ function LeasesModule({ data, notes, onUpdate, onViewProfile, onMassUpload, onMa
 
 // ── Active Initiatives ────────────────────────────────────────────────────────
 
-function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareSnapshot, milestones, criticalItems, onSetCriticalItem, readOnly, mode = 'all' }: {
+function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareSnapshot, milestones, criticalItems, onSetCriticalItem, readOnly, mode = 'all', onAddNote }: {
   allLeases: LeaseRecord[];
   notes: Record<number, LeaseNote[]>;
   onUpdate: (updated: LeaseRecord) => void;
+  /** Log a note straight into the property's note history (tagged with this view's track). */
+  onAddNote?: (leaseId: number, text: string, track?: 'Initiative' | 'Project Mgmt') => void;
   onViewProfile: (id: number) => void;
   onShareSnapshot: () => void;
   milestones: Record<number, Milestone[]>;
@@ -2227,16 +2608,28 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
 }) {
   const isPM = mode === 'pm';
   const isDecom = mode === 'decom';
+  const { leads: LEADS } = useLeads();
 
   // Internal filter: PM mode shows all PM-strategy leases; decom shows Close-strategy leases; otherwise active initiatives.
+  // A lease belongs to a view through its Status/Strategy — or through the
+  // optional `tracks` multi-select, which lets one record live in Active
+  // Initiatives AND Project Management simultaneously.
   const activeLeases = useMemo(
     () => isPM
-      ? allLeases.filter(l => l.strategy === 'Project Management')
+      ? allLeases.filter(l => l.strategy === 'Project Management' || (l.tracks ?? []).includes('Project Management'))
       : isDecom
       ? allLeases.filter(l => l.strategy === 'Close')
-      : allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition'),
+      : allLeases.filter(l => l.status === 'Active Initiative' || l.status === 'Active Disposition' || (l.tracks ?? []).includes('Active Initiative')),
     [allLeases, isPM, isDecom]
   );
+
+  // Per-view note stream: the PM view surfaces Project Mgmt + general notes,
+  // the Active Initiatives view surfaces Initiative + general notes. Each view
+  // keeps its own stream while all notes consolidate on the single record.
+  const viewTrack: 'Initiative' | 'Project Mgmt' | undefined = isPM ? 'Project Mgmt' : isDecom ? undefined : 'Initiative';
+  const noteInView = (n: LeaseNote) =>
+    isDecom ? true : isPM ? n.track !== 'Initiative' : n.track !== 'Project Mgmt';
+  const lastNoteFor = (leaseId: number) => (notes[leaseId] ?? []).find(noteInView);
 
   const [search, setSearch]               = useState('');
   const [statusFilter, setStatusFilter]   = useState<Set<string>>(new Set());
@@ -2277,11 +2670,32 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
   //  - PM/Decom focus on the project workflow (Tenant, Property, Stage, Progress, LCD, SF, PM Contact, Milestone, Critical Items, Last Note).
   //  - 'all' (Active Initiatives) keeps the legacy full column set.
   const PM_DECOM_DEFAULT_COLS = ['tenant', 'property', 'stage', 'progress', 'lcd', 'sf', 'pmContact', 'milestone', 'criticalItems', 'lastNote'];
+  const colsTabKey = isPM ? 'pm' : isDecom ? 'decom' : 'initiatives';
+  // Project Management default view: Property, LCD, and Milestone hidden.
+  const PM_DEFAULT_COLS = ['tenant', 'stage', 'progress', 'sf', 'pmContact', 'criticalItems', 'lastNote'];
+  // Active Initiatives default view: Address, Property, Type, and Urgency hidden.
+  const AI_HIDDEN_BY_DEFAULT = new Set(['lcd', 'pmContact', 'milestone', 'criticalItems', 'address', 'property', 'type', 'urgency']);
+  const builtInDefaultCols = () => isPM
+    ? new Set(PM_DEFAULT_COLS)
+    : isDecom
+    ? new Set(PM_DECOM_DEFAULT_COLS)
+    : new Set(AI_COLUMNS.filter(c => !AI_HIDDEN_BY_DEFAULT.has(c.key)).map(c => c.key));
   const [aiVisibleCols, setAiVisibleCols] = useState<Set<string>>(
-    () => (isPM || isDecom)
-      ? new Set(PM_DECOM_DEFAULT_COLS)
-      : new Set(AI_COLUMNS.filter(c => c.key !== 'lcd' && c.key !== 'pmContact' && c.key !== 'milestone' && c.key !== 'criticalItems').map(c => c.key))
+    () => readDefaultCols(colsTabKey) ?? builtInDefaultCols()
   );
+  const [hasDefaultView, setHasDefaultView] = useState<boolean>(() => readDefaultCols(colsTabKey) !== null);
+  const [defaultJustSaved, setDefaultJustSaved] = useState(false);
+  const saveDefaultView = () => {
+    writeDefaultCols(colsTabKey, aiVisibleCols);
+    setHasDefaultView(true);
+    setDefaultJustSaved(true);
+    setTimeout(() => setDefaultJustSaved(false), 1800);
+  };
+  const clearDefaultView = () => {
+    clearDefaultCols(colsTabKey);
+    setHasDefaultView(false);
+    setAiVisibleCols(builtInDefaultCols());
+  };
   const toggleAiCol = (key: string) => setAiVisibleCols(prev => {
     const next = new Set(prev);
     if (next.has(key)) next.delete(key); else next.add(key);
@@ -2416,7 +2830,6 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
             <KPICard label="Total Active" value={String(totalActive)} icon={<Activity className="w-4 h-4" />} accent="green" />
             <KPICard label="PM Projects" value={String(pmProjects)} icon={<HardHat className="w-4 h-4" />} accent="purple" />
             <KPICard label="Total Active SF" value={fmtSqft(totalSqft)} icon={<Building2 className="w-4 h-4" />} accent="blue" />
-            <KPICard label="Avg Progress" value={`${avgProgress}%`} icon={<BarChart2 className="w-4 h-4" />} accent="amber" />
           </>
         )}
       </div>
@@ -2579,7 +2992,7 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
               <p className="text-xs font-semibold text-muted-foreground">Lead</p>
               {leadFilter.size > 0 && <button className="text-[10px] text-primary hover:underline" onClick={() => setLeadFilter(new Set())}>Clear</button>}
             </div>
-            {CLIENT_LEADS.map(l => (
+            {LEADS.map(l => (
               <label key={l} className="flex items-center gap-2 px-1 py-1.5 rounded hover:bg-muted/50 cursor-pointer text-sm">
                 <Checkbox checked={leadFilter.has(l)} onCheckedChange={() => toggleFilter(leadFilter, l, setLeadFilter)} className="h-4 w-4" />
                 {l}
@@ -2602,6 +3015,18 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                 {col.label}
               </label>
             ))}
+            <div className="border-t border-border mt-2 pt-2 space-y-1">
+              <p className="text-xs font-semibold text-muted-foreground px-1">Default View</p>
+              <Button variant="ghost" size="sm" className="h-7 w-full text-xs gap-1.5 justify-start" onClick={saveDefaultView} data-testid={`save-default-view-${colsTabKey}`}>
+                {defaultJustSaved ? <Check className="w-3 h-3 text-green-500" /> : <Save className="w-3 h-3" />}
+                {defaultJustSaved ? 'Saved — opens this way now' : 'Save as default view'}
+              </Button>
+              {hasDefaultView && !defaultJustSaved && (
+                <Button variant="ghost" size="sm" className="h-7 w-full text-xs gap-1.5 justify-start text-muted-foreground" onClick={clearDefaultView} data-testid={`clear-default-view-${colsTabKey}`}>
+                  <X className="w-3 h-3" />Clear saved default
+                </Button>
+              )}
+            </div>
           </PopoverContent>
         </Popover>
         <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={onShareSnapshot}>
@@ -2655,7 +3080,7 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                 {filtered.map((lease, idx) => {
                   const stages   = STRATEGY_STAGES[lease.strategy] ?? [];
                   const progress = calcProgress(stages, lease.stage);
-                  const lastNote = (notes[lease.id] ?? [])[0];
+                  const lastNote = lastNoteFor(lease.id);
                   // Next upcoming milestone (smallest future date among non-completed milestones).
                   const todayIso = new Date().toISOString().slice(0, 10);
                   const leaseMs = (milestones[lease.id] ?? []).filter(m => m.completed !== true);
@@ -2693,8 +3118,8 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                       {isAiColVisible('leaseExp') && <td className="px-3 py-2.5 text-xs font-medium whitespace-nowrap tabular-nums">{fmtDateShort(lease.leaseEnd)}</td>}
                       {isAiColVisible('urgency')  && <td className="px-3 py-2.5">{getUrgencyBadge(lease.leaseEnd)}</td>}
                       {isAiColVisible('sf')       && <td className="px-3 py-2.5 text-xs tabular-nums">{lease.sqft.toLocaleString()}</td>}
-                      {isAiColVisible('lead')     && <td className="px-1 py-1.5 min-w-[140px]"><SelectCell value={lease.clientLead} options={CLIENT_LEADS} onChange={v => handleFieldUpdate(lease, 'clientLead', v)} disabled={readOnly} /></td>}
-                      {isAiColVisible('pmContact') && <td className="px-1 py-1.5 min-w-[140px]"><SelectCell value={lease.clientLead} options={CLIENT_LEADS} onChange={v => handleFieldUpdate(lease, 'clientLead', v)} disabled={readOnly} /></td>}
+                      {isAiColVisible('lead')     && <td className="px-1 py-1.5 min-w-[140px]"><SelectCell value={lease.clientLead} options={LEADS} onChange={v => handleFieldUpdate(lease, 'clientLead', v)} disabled={readOnly} /></td>}
+                      {isAiColVisible('pmContact') && <td className="px-1 py-1.5 min-w-[140px]"><SelectCell value={lease.clientLead} options={LEADS} onChange={v => handleFieldUpdate(lease, 'clientLead', v)} disabled={readOnly} /></td>}
                       {isAiColVisible('milestone') && <td className="px-3 py-2.5 text-xs min-w-[180px]">
                         {upcomingMs ? (
                           <div className="space-y-0.5">
@@ -2715,12 +3140,12 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
                         />
                       </td>}
                       {isAiColVisible('lastNote') && <td className="px-3 py-2.5 min-w-[260px]">
-                        {lastNote ? (
-                          <div className="space-y-0.5">
-                            <p className="text-xs leading-snug whitespace-normal break-words">{lastNote.text}</p>
-                            <p className="text-[10px] text-muted-foreground">{lastNote.author} · {lastNote.date}</p>
-                          </div>
-                        ) : <span className="text-xs text-muted-foreground italic">—</span>}
+                        <QuickNoteCell
+                          lastNote={lastNote}
+                          readOnly={readOnly || !onAddNote}
+                          trackLabel={viewTrack}
+                          onAdd={text => onAddNote?.(lease.id, text, viewTrack)}
+                        />
                       </td>}
                     </tr>
                   );
@@ -2739,7 +3164,7 @@ function InitiativesModule({ allLeases, notes, onUpdate, onViewProfile, onShareS
       {viewMode === 'cards' && filtered.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
           {filtered.map((lease) => {
-            const lNotes     = notes[lease.id] ?? [];
+            const lNotes     = (notes[lease.id] ?? []).filter(noteInView);
             const latestNote = lNotes[0];
             const stages     = STRATEGY_STAGES[lease.strategy] ?? [];
             const progress   = calcProgress(stages, lease.stage);
@@ -2814,6 +3239,9 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
   portfolioName: string;
   readOnly?: boolean;
 }) {
+  const { leads: LEADS, addLead } = useLeads();
+  const [showAddLead, setShowAddLead] = useState(false);
+  const [newLeadName, setNewLeadName] = useState('');
   // Which PM lease panels are expanded in the Stage Plans section
   const [expandedPlanIds, setExpandedPlanIds] = useState<Record<number, boolean>>({});
   const [editingDate, setEditingDate] = useState<number | null>(null);
@@ -3117,6 +3545,101 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
     setTempDate(manualDates[leaseId] ?? '');
   };
 
+  // Inline stage-plan editor — expands directly beneath a Gantt row so plans
+  // live inside the chart instead of a separate section at the bottom.
+  const renderStagePlanBody = (lease: LeaseRecord) => {
+    const stages = (STRATEGY_STAGES[lease.strategy] ?? []).filter(st => st !== '—');
+    if (stages.length === 0) return null;
+    const todayMs = today.getTime();
+    const todayStr = today.toISOString().slice(0, 10);
+    const currentStageIdx = stages.indexOf(lease.stage);
+    const plan = pmStagePlans[lease.id] ?? {};
+    const startMs = lease.leaseStart ? new Date(lease.leaseStart).getTime() : NaN;
+    let cum = 0;
+    const stageRows = stages.map((stage, idx) => {
+      const weeks = Number(plan[stage] ?? 0);
+      const safeWeeks = Number.isFinite(weeks) && weeks > 0 ? weeks : 0;
+      cum += safeWeeks;
+      const targetMs = Number.isFinite(startMs) && safeWeeks > 0 ? startMs + cum * 7 * 24 * 60 * 60 * 1000 : NaN;
+      const targetDate = Number.isFinite(targetMs) ? new Date(targetMs).toISOString().slice(0, 10) : '';
+      const isDone = currentStageIdx > idx;
+      let status: 'Done' | 'Overdue' | 'At Risk' | 'On Track' | '—' = '—';
+      if (isDone) status = 'Done';
+      else if (Number.isFinite(targetMs)) {
+        if (targetDate < todayStr) status = 'Overdue';
+        else {
+          const daysUntil = Math.ceil((targetMs - todayMs) / (1000 * 60 * 60 * 24));
+          status = daysUntil <= 14 ? 'At Risk' : 'On Track';
+        }
+      }
+      return { stage, idx, weeks: safeWeeks, targetDate, status };
+    });
+    const hasAnyDuration = stageRows.some(r => r.weeks > 0);
+    return (
+      <div className="mt-1 mb-2 md:ml-44 border border-border rounded-md bg-muted/20 p-3 space-y-2" data-testid={`pm-plan-${lease.id}`}>
+        <div className="flex items-center gap-2">
+          <ListChecks className="w-3.5 h-3.5 text-primary" />
+          <span className="text-xs font-semibold">Stage plan — {lease.tenant}</span>
+          <span className="text-[11px] text-muted-foreground">Weeks per stage, dated from lease start ({lease.leaseStart ? fmtDateShort(lease.leaseStart) : 'not set'})</span>
+        </div>
+        {!lease.leaseStart && (
+          <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-2 py-1.5">
+            <AlertTriangle className="w-3.5 h-3.5" /> Set a lease start date on the Leases tab to compute target dates.
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border">
+                <th className="py-1.5 pr-2 font-semibold">Stage</th>
+                <th className="py-1.5 pr-2 font-semibold w-24">Weeks</th>
+                <th className="py-1.5 pr-2 font-semibold w-32">Target Date</th>
+                <th className="py-1.5 pr-2 font-semibold w-24">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stageRows.map(row => (
+                <tr key={row.stage} className="border-b border-border/40 last:border-0">
+                  <td className="py-1.5 pr-2 font-medium">{row.stage}</td>
+                  <td className="py-1.5 pr-2">
+                    <Input
+                      type="number" min={0} step={1}
+                      value={row.weeks || ''}
+                      placeholder="0"
+                      onChange={e => onSetPMStageDuration(lease.id, row.stage, Number(e.target.value) || 0)}
+                      className="h-7 w-20 text-xs tabular-nums"
+                      disabled={readOnly}
+                      data-testid={`pm-plan-weeks-${lease.id}-${row.idx}`}
+                    />
+                  </td>
+                  <td className="py-1.5 pr-2 tabular-nums text-muted-foreground">{row.targetDate ? fmtDateShort(row.targetDate) : '—'}</td>
+                  <td className="py-1.5 pr-2">
+                    {row.status === 'Done' && <Badge className="text-[10px] px-1.5 py-0 h-4 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">Done</Badge>}
+                    {row.status === 'Overdue' && <Badge className="text-[10px] px-1.5 py-0 h-4 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0">Overdue</Badge>}
+                    {row.status === 'At Risk' && <Badge className="text-[10px] px-1.5 py-0 h-4 bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-0">At Risk</Badge>}
+                    {row.status === 'On Track' && <Badge className="text-[10px] px-1.5 py-0 h-4 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0">On Track</Badge>}
+                    {row.status === '—' && <span className="text-muted-foreground text-[11px]">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <Button
+            size="sm" className="h-7 text-xs"
+            disabled={readOnly || !lease.leaseStart || !hasAnyDuration}
+            onClick={() => onApplyPMStagePlan(lease.id)}
+            data-testid={`pm-plan-apply-${lease.id}`}
+          >
+            <Save className="w-3 h-3 mr-1" /> Save &amp; Generate Milestones
+          </Button>
+          <span className="text-[11px] text-muted-foreground">Milestones appear as diamonds on this row. Re-applying replaces existing stage milestones.</span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
       {/* KPIs */}
@@ -3135,7 +3658,25 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
             <p className="text-xs text-muted-foreground mt-0.5">Click any bar to view building profile · end date = lease expiration or manual override · color = strategy</p>
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {['all', ...CLIENT_LEADS].map(lead => (
+            {showAddLead ? (
+              <span className="flex items-center gap-1">
+                <Input autoFocus placeholder="Name…" value={newLeadName} onChange={e => setNewLeadName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newLeadName.trim()) { addLead(newLeadName); setNewLeadName(''); setShowAddLead(false); }
+                    if (e.key === 'Escape') { setShowAddLead(false); setNewLeadName(''); }
+                  }}
+                  className="h-7 w-36 text-xs" data-testid="input-add-lead" />
+                <Button size="sm" className="h-7 text-[10px] px-2" disabled={!newLeadName.trim()}
+                  onClick={() => { addLead(newLeadName); setNewLeadName(''); setShowAddLead(false); }} data-testid="button-save-lead">Add</Button>
+                <Button size="sm" variant="ghost" className="h-7 text-[10px] px-1.5" onClick={() => { setShowAddLead(false); setNewLeadName(''); }}><X className="w-3 h-3" /></Button>
+              </span>
+            ) : (
+              <Button variant="outline" size="sm" className="h-7 text-[10px] px-2 gap-1 border-dashed" onClick={() => setShowAddLead(true)}
+                title="Add a person to this portfolio's lead list" data-testid="button-add-lead">
+                <Plus className="w-3 h-3" />Add Name
+              </Button>
+            )}
+            {['all', ...LEADS].map(lead => (
               <Button key={lead} variant={filterLead === lead ? 'default' : 'outline'} size="sm" className="h-7 text-[10px] px-2"
                 onClick={() => setFilterLead(lead)}>
                 {lead === 'all' ? 'All' : lead}
@@ -3153,10 +3694,10 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
         {/* Sliding view controls */}
         <div className="flex items-center justify-between mb-3 gap-2 flex-wrap border-b border-border pb-3">
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground font-medium mr-1">View:</span>
+            <span className="text-[11px] text-muted-foreground font-medium mr-1">View:</span>
             {([6, 12, 18, 24, 'all'] as ViewRange[]).map(r => (
               <button key={String(r)} onClick={() => setViewRange(r)}
-                className={cn('px-2 py-1 text-[10px] rounded-md border transition-colors',
+                className={cn('px-2 py-1 text-[11px] rounded-md border transition-colors',
                   viewRange === r
                     ? 'bg-primary text-primary-foreground border-primary'
                     : 'bg-card border-border hover:bg-muted text-foreground'
@@ -3197,8 +3738,8 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
               <div className="flex-1 relative h-8 overflow-hidden">
                 {monthMarkers.map((m, i) => (
                   <div key={`${m.label}-${m.year}-${i}`} className="absolute top-0 flex flex-col items-center" style={{ left: `${m.pct}%`, transform: 'translateX(-50%)' }}>
-                    {m.isJan && <span className="text-[9px] font-bold text-primary leading-none">{m.year}</span>}
-                    <span className={cn('text-[8px] leading-none', m.isJan ? 'text-primary font-semibold' : 'text-muted-foreground')}>{m.label}</span>
+                    {m.isJan && <span className="text-[11px] font-bold text-primary leading-none">{m.year}</span>}
+                    <span className={cn('text-[10px] leading-none', m.isJan ? 'text-primary font-semibold' : 'text-muted-foreground')}>{m.label}</span>
                   </div>
                 ))}
               </div>
@@ -3219,9 +3760,23 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                 const width    = barOutside ? 0 : Math.max(0.5, clippedEnd - clippedStart);
                 const colors   = getGanttColor(lease);
 
+                const planStages = (STRATEGY_STAGES[lease.strategy] ?? []).filter(st => st !== '—');
+                const planOpen = expandedPlanIds[lease.id] === true;
+                const hasPlanMilestones = (milestones[lease.id] ?? []).some(m => m.label.startsWith('Stage: ') || m.label.startsWith('PM Stage: '));
                 return (
-                  <div key={lease.id} className="flex items-center group">
+                  <div key={lease.id}>
+                  <div className="flex items-center group">
                     <div className="w-44 shrink-0 flex items-center gap-1.5 pr-2">
+                      {planStages.length > 0 ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setExpandedPlanIds(prev => ({ ...prev, [lease.id]: !prev[lease.id] })); }}
+                          className={cn('w-4 h-4 shrink-0 flex items-center justify-center rounded transition-colors',
+                            planOpen ? 'text-primary' : hasPlanMilestones ? 'text-primary/70 hover:text-primary' : 'text-muted-foreground/50 hover:text-primary')}
+                          title={planOpen ? 'Close stage plan' : 'Edit stage plan (weeks per stage → milestones on this row)'}
+                          data-testid={`pm-plan-toggle-${lease.id}`}>
+                          {planOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        </button>
+                      ) : <span className="w-4 shrink-0" />}
                       <span className="text-xs font-medium truncate flex-1 cursor-pointer hover:text-primary transition-colors"
                         onClick={() => onViewProfile(lease.id)}
                         title={`${lease.tenant} — ${lease.property}${lease.address ? '\n' + lease.address : ''}\nStrategy: ${lease.strategy}`}>
@@ -3235,7 +3790,7 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                         </button>
                       )}
                     </div>
-                    <div className="flex-1 relative h-7 rounded bg-muted/20 cursor-pointer overflow-hidden" onClick={() => onViewProfile(lease.id)}
+                    <div className="flex-1 relative h-8 rounded bg-muted/20 cursor-pointer overflow-hidden" onClick={() => onViewProfile(lease.id)}
                       title={`${lease.tenant} — ${lease.property}${lease.address ? '\n' + lease.address : ''}\nStrategy: ${lease.strategy} · Stage: ${lease.stage || 'N/A'} · Exp: ${fmtDateShort(lease.leaseEnd)}`}>
                       {monthMarkers.map((m, i) => (
                         <div key={`grid-${m.label}-${m.year}-${i}`} className={cn('absolute top-0 bottom-0 border-l', m.isJan ? 'border-border/60' : 'border-border/15')} style={{ left: `${m.pct}%` }} />
@@ -3249,7 +3804,7 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                           style={{ width: `${progress * 100}%`, backgroundColor: colors.bg, opacity: 0.85 }} />
                       </div>
                       {width > 8 && (
-                        <div className="absolute top-0.5 bottom-0.5 flex items-center px-2 text-[9px] font-medium pointer-events-none"
+                        <div className="absolute top-0.5 bottom-0.5 flex items-center px-2 text-[11px] font-medium pointer-events-none"
                           style={{ left: `${startPct + 0.5}%`, color: progress > 0.3 ? 'white' : colors.bg }}>
                           {lease.stage}
                         </div>
@@ -3279,6 +3834,8 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                       })}
                     </div>
                   </div>
+                  {planOpen && renderStagePlanBody(lease)}
+                  </div>
                 );
               };
 
@@ -3289,8 +3846,9 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                     <>
                       <div className="flex items-center gap-2 py-1.5 mt-1">
                         <Activity className="w-3.5 h-3.5 text-primary" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-primary">Active Initiatives</span>
-                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4">{nonPmLeases.length}</Badge>
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-primary">Active Initiatives</span>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{nonPmLeases.length}</Badge>
+                        <span className="text-[11px] text-muted-foreground hidden md:inline">— click a row's arrow to edit its stage plan</span>
                         <div className="flex-1 border-b border-border/40" />
                       </div>
                       {nonPmLeases.map(renderGanttRow)}
@@ -3301,8 +3859,8 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
                     <>
                       <div className="flex items-center gap-2 py-1.5 mt-3">
                         <HardHat className="w-3.5 h-3.5 text-violet-500" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-violet-500 dark:text-violet-400">Project Management</span>
-                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400">{pmLeases.length}</Badge>
+                        <span className="text-[11px] font-bold uppercase tracking-wide text-violet-500 dark:text-violet-400">Project Management</span>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400">{pmLeases.length}</Badge>
                         <div className="flex-1 border-b border-violet-200 dark:border-violet-800/40" />
                       </div>
                       {pmLeases.map(renderGanttRow)}
@@ -3328,7 +3886,7 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
               <span className="flex items-center gap-1.5"><Diamond className="w-3 h-3 text-amber-500 fill-amber-500" />Milestone</span>
               <span className="flex items-center gap-1.5"><Diamond className="w-3 h-3 text-orange-500 fill-orange-500" />At Risk (≤ 14d)</span>
               <span className="flex items-center gap-1.5"><Diamond className="w-3 h-3 text-red-500 fill-red-500" />Overdue</span>
-              <span className="text-[10px] text-muted-foreground/70">(filled portion = progress)</span>
+              <span className="text-[11px] text-muted-foreground/70">(filled portion = progress)</span>
             </div>
           </div>
         )}
@@ -3391,158 +3949,6 @@ function RoadmapModule({ allLeases, notes, onViewProfile, manualDates, onSetManu
           </div>
         )}
       </div>
-
-      {/* Stage Plans (shared renderer for Active Initiatives & Project Management) */}
-      {(() => {
-        const todayMs = today.getTime();
-        const todayStr = today.toISOString().slice(0, 10);
-        // Shared panel renderer — used by both Active Initiatives and Project Management sections
-        const renderStagePlanPanel = (lease: LeaseRecord, accentClass: string) => {
-          const stages = (STRATEGY_STAGES[lease.strategy] ?? []).filter(s => s !== '—');
-          if (stages.length === 0) return null;
-          const currentStageIdx = stages.indexOf(lease.stage); // -1 if not started
-          const plan = pmStagePlans[lease.id] ?? {};
-          const isOpen = expandedPlanIds[lease.id] === true;
-          const startMs = lease.leaseStart ? new Date(lease.leaseStart).getTime() : NaN;
-          let cum = 0;
-          const stageRows = stages.map((stage, idx) => {
-            const weeks = Number(plan[stage] ?? 0);
-            const safeWeeks = Number.isFinite(weeks) && weeks > 0 ? weeks : 0;
-            cum += safeWeeks;
-            const targetMs = Number.isFinite(startMs) && safeWeeks > 0
-              ? startMs + cum * 7 * 24 * 60 * 60 * 1000
-              : NaN;
-            const targetDate = Number.isFinite(targetMs) ? new Date(targetMs).toISOString().slice(0, 10) : '';
-            const isDone = currentStageIdx > idx;
-            let status: 'Done' | 'Overdue' | 'At Risk' | 'On Track' | '—' = '—';
-            if (isDone) status = 'Done';
-            else if (Number.isFinite(targetMs)) {
-              if (targetDate < todayStr) status = 'Overdue';
-              else {
-                const daysUntil = Math.ceil((targetMs - todayMs) / (1000 * 60 * 60 * 24));
-                if (daysUntil <= 14) status = 'At Risk';
-                else status = 'On Track';
-              }
-            }
-            return { stage, idx, weeks: safeWeeks, targetDate, status };
-          });
-          const hasAnyDuration = stageRows.some(r => r.weeks > 0);
-          // Match both new "Stage: " prefix and legacy "PM Stage: " prefix
-          const hasGeneratedMilestones = (milestones[lease.id] ?? []).some(m => m.label.startsWith('Stage: ') || m.label.startsWith('PM Stage: '));
-          return (
-            <div key={lease.id} className="border border-border rounded-md overflow-hidden" data-testid={`pm-plan-${lease.id}`}>
-              <button
-                type="button"
-                onClick={() => setExpandedPlanIds(prev => ({ ...prev, [lease.id]: !prev[lease.id] }))}
-                className="w-full flex items-center gap-3 px-3 py-2 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-                data-testid={`pm-plan-toggle-${lease.id}`}
-              >
-                {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
-                <span className="text-xs font-semibold flex-1 truncate">{lease.tenant}</span>
-                <span className="text-[10px] text-muted-foreground hidden md:inline">Strategy: <span className="font-medium text-foreground">{lease.strategy}</span></span>
-                <span className="text-[10px] text-muted-foreground hidden sm:inline">Start: <span className="tabular-nums font-medium text-foreground">{lease.leaseStart ? fmtDateShort(lease.leaseStart) : '—'}</span></span>
-                {hasGeneratedMilestones && <Badge variant="outline" className={cn('text-[9px] px-1.5 py-0 h-4', accentClass)}>Plan Active</Badge>}
-              </button>
-              {isOpen && (
-                <div className="p-3 space-y-2 bg-card">
-                  {!lease.leaseStart && (
-                    <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded px-2 py-1.5">
-                      <AlertTriangle className="w-3.5 h-3.5" /> Set a lease start date on the Leases tab to compute target dates.
-                    </div>
-                  )}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border">
-                          <th className="py-1.5 pr-2 font-semibold">Stage</th>
-                          <th className="py-1.5 pr-2 font-semibold w-24">Weeks</th>
-                          <th className="py-1.5 pr-2 font-semibold w-32">Target Date</th>
-                          <th className="py-1.5 pr-2 font-semibold w-24">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {stageRows.map(row => (
-                          <tr key={row.stage} className="border-b border-border/40 last:border-0">
-                            <td className="py-1.5 pr-2 font-medium">{row.stage}</td>
-                            <td className="py-1.5 pr-2">
-                              <Input
-                                type="number"
-                                min={0}
-                                step={1}
-                                value={row.weeks || ''}
-                                placeholder="0"
-                                onChange={e => onSetPMStageDuration(lease.id, row.stage, Number(e.target.value) || 0)}
-                                className="h-7 w-20 text-xs tabular-nums"
-                                disabled={readOnly}
-                                data-testid={`pm-plan-weeks-${lease.id}-${row.idx}`}
-                              />
-                            </td>
-                            <td className="py-1.5 pr-2 tabular-nums text-muted-foreground">{row.targetDate ? fmtDateShort(row.targetDate) : '—'}</td>
-                            <td className="py-1.5 pr-2">
-                              {row.status === 'Done' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">Done</Badge>}
-                              {row.status === 'Overdue' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-0">Overdue</Badge>}
-                              {row.status === 'At Risk' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-0">At Risk</Badge>}
-                              {row.status === 'On Track' && <Badge className="text-[9px] px-1.5 py-0 h-4 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0">On Track</Badge>}
-                              {row.status === '—' && <span className="text-muted-foreground text-[10px]">—</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    <Button
-                      size="sm"
-                      className="h-7 text-xs"
-                      disabled={readOnly || !lease.leaseStart || !hasAnyDuration}
-                      onClick={() => onApplyPMStagePlan(lease.id)}
-                      data-testid={`pm-plan-apply-${lease.id}`}
-                    >
-                      <Save className="w-3 h-3 mr-1" /> Save &amp; Generate Milestones
-                    </Button>
-                    <span className="text-[10px] text-muted-foreground">Generates one milestone per stage with a duration. Re-applying replaces existing stage milestones.</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        };
-
-        const planLeases = nonPmLeases.filter(l => l.strategy && l.strategy !== '—');
-        return (
-          <>
-            {/* Active Initiative Stage Plans */}
-            {planLeases.length > 0 && (
-              <div className="bg-card border border-border rounded-lg p-4" data-testid="active-stage-plans-section">
-                <div className="flex items-center gap-2 mb-1">
-                  <Activity className="w-4 h-4 text-primary" />
-                  <h3 className="text-sm font-semibold">Active Initiative Stage Plans</h3>
-                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">{planLeases.length}</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mb-3">Set the duration (weeks) for each stage of the lease’s strategy. Target dates are calculated cumulatively from the lease start date. Click “Save &amp; Generate Milestones” to add them to the Gantt chart above.</p>
-                <div className="space-y-2">
-                  {planLeases.map(l => renderStagePlanPanel(l, 'border-primary/40 text-primary'))}
-                </div>
-              </div>
-            )}
-
-            {/* Project Management Stage Plans */}
-            {pmLeases.length > 0 && (
-              <div className="bg-card border border-border rounded-lg p-4" data-testid="pm-stage-plans-section">
-                <div className="flex items-center gap-2 mb-1">
-                  <HardHat className="w-4 h-4 text-violet-500" />
-                  <h3 className="text-sm font-semibold">Project Management Stage Plans</h3>
-                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400">{pmLeases.length}</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground mb-3">Set the duration (weeks) for each Project Management stage. Target dates are calculated cumulatively from the lease start date. Click “Save &amp; Generate Milestones” to add them to the Gantt chart above.</p>
-                <div className="space-y-2">
-                  {pmLeases.map(l => renderStagePlanPanel(l, 'border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400'))}
-                </div>
-              </div>
-            )}
-          </>
-        );
-      })()}
 
       {/* Lease expiration bar chart */}
       <div className="bg-card border border-border rounded-lg p-4">
@@ -4381,26 +4787,6 @@ function QBRModule({ leases, qbrEntries, notes, onAddQBREntry, onUpdateQBREntry,
         </div>
       </div>
 
-      {/* Priority Action Items */}
-      <div className="bg-card border border-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold mb-3">Priority Action Items — {quarter}</h3>
-        <div className="space-y-2">
-          {[
-            { priority: 'Critical', action: 'Execute PwC relocation — LOI signed, lease negotiations in progress', owner: 'Travis Hilty' },
-            { priority: 'Critical', action: 'Submit counterproposal on United Airlines Willis Tower renewal at $43 PSF', owner: 'Travis Hilty' },
-            { priority: 'High',     action: 'Finalize Bank of America sublease marketing — 2 tours scheduled', owner: 'Alisha Shields' },
-            { priority: 'High',     action: 'Complete NCR construction punch list review by August 2026', owner: 'Matt Epperson' },
-            { priority: 'Medium',   action: 'Initiate Cox Perimeter renewal restructure negotiations', owner: 'Alisha Shields' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-start gap-3 py-2 border-b border-border last:border-0">
-              <Badge className={cn('text-xs border-0 shrink-0 mt-0.5', PRIORITY_STYLES[item.priority])}>{item.priority}</Badge>
-              <p className="text-sm flex-1">{item.action}</p>
-              <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{item.owner}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Delete confirmation dialog */}
       {deleteConfirmId !== null && (() => {
         const target = qbrEntries.find(e => e.id === deleteConfirmId);
@@ -4936,6 +5322,7 @@ function AddPropertyModal({ existingIds, onAdd, onClose }: {
   onAdd: (lease: LeaseRecord) => void;
   onClose: () => void;
 }) {
+  const { leads: LEADS } = useLeads();
   const [tenant, setTenant]       = useState('');
   const [property, setProperty]   = useState('');
   const [address, setAddress]     = useState('');
@@ -5035,7 +5422,7 @@ function AddPropertyModal({ existingIds, onAdd, onClose }: {
               <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="—">—</SelectItem>
-                {CLIENT_LEADS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+                {LEADS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -5122,9 +5509,10 @@ function AddPropertyModal({ existingIds, onAdd, onClose }: {
   );
 }
 
-function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, onDeleteTemplate, onExportTemplates, onImportTemplates }: {
+function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, onDeleteTemplate, onExportTemplates, onImportTemplates, trackedFields }: {
   onImport: (rows: Partial<LeaseRecord>[]) => void;
   onClose: () => void;
+  trackedFields?: TrackedField[] | null;
   savedTemplates: MappingTemplate[];
   onSaveTemplate: (t: MappingTemplate) => void;
   onDeleteTemplate: (name: string) => void;
@@ -5154,7 +5542,57 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
 
   const STEP_LABELS = ['Upload File', 'Map Fields', 'Preview & Import', 'Done'];
 
+  // The mappable field list mirrors this portfolio's tracked categories — same
+  // fields, same order — including any custom categories. Portfolios without a
+  // configuration fall back to the full standard list.
+  const effectiveFields: { key: string; label: string }[] = useMemo(() => {
+    if (!trackedFields || trackedFields.length === 0) return MAPPABLE_FIELDS.map(f => ({ key: f.key as string, label: f.label }));
+    const configured = trackedFields.map(f => ({ key: f.key, label: f.label }));
+    // Keep Record ID available for de-dup matching even if not configured.
+    if (!configured.some(f => f.key === 'id')) configured.unshift({ key: 'id', label: 'Record ID' });
+    return configured;
+  }, [trackedFields]);
+  const fieldLabel = (key: string) => effectiveFields.find(f => f.key === key)?.label
+    ?? MAPPABLE_FIELDS.find(f => f.key === key)?.label ?? key;
+
   const downloadTemplate = () => {
+    if (trackedFields && trackedFields.length > 0) {
+      // Column headers match the tracked categories in their configured order.
+      const headers = trackedFields.map(f => f.label);
+      const sample = trackedFields.map(f => {
+        switch (f.key) {
+          case 'tenant': return 'Acme Corp';
+          case 'property': return 'Main Office';
+          case 'address': return '"123 Main St, Dallas TX"';
+          case 'sqft': return '15000';
+          case 'rentPSF': return '28.50';
+          case 'totalRent': return '427500';
+          case 'leaseStart': return '2024-01-01';
+          case 'leaseEnd': return '2029-12-31';
+          case 'type': return 'Office';
+          case 'clientLead': return 'Jane Smith';
+          case 'status': return 'Active Initiative';
+          case 'strategy': return '"Maintain / Renew"';
+          case 'stage': return '"1. Plan and Program"';
+          case 'market': return 'Dallas';
+          case 'submarket': return 'Uptown';
+          case 'floors': return '"3,4"';
+          case 'broker': return '"Jones Lang LaSalle"';
+          case 'lat': return '32.7884';
+          case 'lng': return '-96.8005';
+          case 'costarId': return '8014567';
+          case 'recordId': return 'EXT-1001';
+          default: return 'Sample value';
+        }
+      });
+      const csv = headers.join(',') + '\n' + sample.join(',') + '\n';
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'CRE_Lease_Upload_Template.csv'; a.click();
+      URL.revokeObjectURL(url);
+      return;
+    }
     const csv = CSV_TEMPLATE_FIELDS.join(',') + '\n' +
       '1001,Acme Corp,Main Office,"123 Main St, Dallas TX",15000,28.50,427500,2024-01-01,2029-12-31,Office,Alisha Shields,Active Initiative,"Maintain / Renew","1. Plan and Program",Dallas,Uptown,"3,4","Jones Lang LaSalle",32.7884,-96.8005,8014567\n';
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -5167,7 +5605,12 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
   const autoMapHeaders = (headers: string[]): { csvCol: string; dbField: string }[] => {
     const result: { csvCol: string; dbField: string }[] = [];
     headers.forEach(h => {
-      const match = CSV_FIELD_MAP[h.toLowerCase().trim()];
+      const norm = h.toLowerCase().trim();
+      // Tracked-category labels (incl. custom fields) match first…
+      const tracked = effectiveFields.find(f => f.label.toLowerCase() === norm);
+      if (tracked) { result.push({ csvCol: h, dbField: tracked.key }); return; }
+      // …then the standard alias map.
+      const match = CSV_FIELD_MAP[norm];
       if (match) result.push({ csvCol: h, dbField: match });
     });
     return result;
@@ -5275,11 +5718,11 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
   const usedCsvCols = new Set(mappings.map(m => m.csvCol));
   const usedDbFields = new Set(mappings.map(m => m.dbField));
   const availableCsvCols = csvHeaders.filter(h => !usedCsvCols.has(h));
-  const availableDbFields = MAPPABLE_FIELDS.filter(f => !usedDbFields.has(f.key));
+  const availableDbFields = effectiveFields.filter(f => !usedDbFields.has(f.key as keyof LeaseRecord));
   const hasMappings = mappings.length > 0;
   const validRows = rows.filter(r => r.errors.length === 0);
   const invalidRows = rows.filter(r => r.errors.length > 0);
-  const dbLabel = (key: string) => MAPPABLE_FIELDS.find(f => f.key === key)?.label ?? key;
+  const dbLabel = (key: string) => fieldLabel(key);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault(); setDragOver(false);
@@ -6032,13 +6475,10 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
   const otherGroup = filteredActive
     .filter(l => l.strategy !== 'Project Management')
     .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
-  // Project Management — sorted A-Z by tenant, then property
+  // Project Management — sorted by nearest lease expiration
   const pmGroup = filteredActive
     .filter(l => l.strategy === 'Project Management')
-    .sort((a, b) => {
-      const t = a.tenant.localeCompare(b.tenant);
-      return t !== 0 ? t : a.property.localeCompare(b.property);
-    });
+    .sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1);
   // Render order: Active Initiatives first, then Project Management
   const activeLeases = [...otherGroup, ...pmGroup];
 
@@ -6068,19 +6508,40 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
   const cardBgFor = (l: LeaseRecord) => isPmLease(l) ? pmCardBg : isDecomLease(l) ? decomCardBg : cardBg;
   const borderFor = (l: LeaseRecord) => isPmLease(l) ? pmBorder : isDecomLease(l) ? decomBorder : border;
 
-  const handlePrint = () => {
+  type PrintSection = 'all' | 'active' | 'pm' | 'decom';
+  const SECTION_TITLES: Record<PrintSection, string> = {
+    all: 'Portfolio Activity Report',
+    active: 'Portfolio Activity Report — Active Initiatives',
+    pm: 'Portfolio Activity Report — Project Management',
+    decom: 'Portfolio Activity Report — Decommission',
+  };
+  const handlePrint = (section: PrintSection = 'all') => {
     const el = document.getElementById('print-report-content');
     if (!el) return;
     const w = window.open('', '_blank');
     if (!w) return;
-    w.document.write(`<!DOCTYPE html><html><head><title>Portfolio Activity Report</title>
+    const twLogo = `${window.location.origin}/transwestern-logo-primary.png`;
+    const sectionCss = section === 'all'
+      ? ''
+      : `[data-pg]:not([data-pg="${section}"]) { display: none !important; }`;
+    w.document.write(`<!DOCTYPE html><html><head><title>${SECTION_TITLES[section]}</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        @page { size: letter landscape; margin: 12mm; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: ${bg}; color: ${fg}; padding: 32px; }
-        @media print { body { padding: 16px; } }
-      </style></head><body>${el.innerHTML}</body></html>`);
+        .tw-print-logo { display: none; }
+        ${sectionCss}
+        @media print {
+          body { padding: 0; padding-top: 34px; }
+          .tw-print-logo { display: block; position: fixed; top: 0; right: 0; height: 26px; z-index: 999; }
+          [data-pg-break="true"] { page-break-before: always; }
+          [data-pg] > div, .pr-card { page-break-inside: avoid; }
+        }
+      </style></head><body>
+      <img class="tw-print-logo" src="${twLogo}" alt="Transwestern" />
+      ${el.innerHTML}</body></html>`);
     w.document.close();
-    setTimeout(() => { w.print(); }, 400);
+    setTimeout(() => { w.print(); }, 500);
   };
 
   return (
@@ -6102,9 +6563,15 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
                 <Moon className="w-3 h-3" />Dark
               </button>
             </div>
-            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={handlePrint}>
-              <Printer className="w-3.5 h-3.5" />Print
+            <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => handlePrint('all')} data-testid="print-report-all">
+              <Printer className="w-3.5 h-3.5" />Print Full Report
             </Button>
+            <div className="flex items-center border border-border rounded-md overflow-hidden">
+              <span className="px-2 text-[10px] text-muted-foreground whitespace-nowrap">Separate PDFs:</span>
+              <button onClick={() => handlePrint('active')} className="px-2 py-1.5 text-xs hover:bg-muted border-l border-border" title="Print only Active Initiatives" data-testid="print-report-active">Active</button>
+              <button onClick={() => handlePrint('pm')} className="px-2 py-1.5 text-xs hover:bg-muted border-l border-border" title="Print only Project Management" data-testid="print-report-pm">PM</button>
+              <button onClick={() => handlePrint('decom')} className="px-2 py-1.5 text-xs hover:bg-muted border-l border-border" title="Print only Decommission" data-testid="print-report-decom">Decom</button>
+            </div>
           </div>
         </div>
 
@@ -6168,18 +6635,19 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
               return (
                 <React.Fragment key={lease.id}>
                   {isFirstInGroup && groupTitle && (
-                    <div style={{ marginTop: idx === 0 ? '0' : '24px', marginBottom: '14px', paddingBottom: '8px', borderBottom: `2px solid ${groupColor}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div data-pg={groupTitle === 'Project Management' ? 'pm' : 'active'} data-pg-break={idx !== 0 ? 'true' : undefined}
+                      style={{ marginTop: idx === 0 ? '0' : '24px', marginBottom: '14px', paddingBottom: '8px', borderBottom: `2px solid ${groupColor}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ width: '4px', height: '18px', background: groupColor, borderRadius: '2px' }} />
                       <span style={{ fontSize: '13px', fontWeight: 700, color: fg, letterSpacing: '0.02em' }}>{groupTitle}</span>
                       <span style={{ fontSize: '10px', color: fgMuted, background: cardBg, padding: '2px 8px', borderRadius: '10px', border: `1px solid ${border}` }}>{groupCount} {groupCount === 1 ? 'location' : 'locations'}</span>
                     </div>
                   )}
-                <div style={{ border: `1px solid ${borderFor(lease)}`, borderLeft: isPmLease(lease) ? `4px solid ${pmColor}` : `1px solid ${borderFor(lease)}`, borderRadius: '8px', padding: '16px', marginBottom: '12px', background: cardBgFor(lease) }}>
+                <div data-pg={isPmLease(lease) ? 'pm' : 'active'} className="pr-card" style={{ border: `1px solid ${borderFor(lease)}`, borderLeft: isPmLease(lease) ? `4px solid ${pmColor}` : `1px solid ${borderFor(lease)}`, borderRadius: '8px', padding: '16px', marginBottom: '12px', background: cardBgFor(lease) }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       {logo && <img src={logo} alt={lease.tenant} style={{ height: '24px', maxWidth: '100px', objectFit: 'contain' }} />}
                       <div>
-                        <p style={{ fontSize: '14px', fontWeight: 700 }}>{idx + 1}. {lease.tenant} — {lease.property}</p>
+                        <p style={{ fontSize: '14px', fontWeight: 700 }}>{(isPmLease(lease) ? idx - otherGroup.length : idx) + 1}. {lease.tenant} — {lease.property}</p>
                         <p style={{ fontSize: '11px', color: fgMuted }}>{lease.address}</p>
                       </div>
                     </div>
@@ -6214,8 +6682,8 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
 
             {/* Decommission Section — mirrors the Active groups, separately colored. */}
             {decomGroup.length > 0 && (
-              <>
-                <div style={{ marginTop: '24px', marginBottom: '14px', paddingBottom: '8px', borderBottom: `2px solid ${decomColor}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div data-pg="decom">
+                <div data-pg-break="true" style={{ marginTop: '24px', marginBottom: '14px', paddingBottom: '8px', borderBottom: `2px solid ${decomColor}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ width: '4px', height: '18px', background: decomColor, borderRadius: '2px' }} />
                   <span style={{ fontSize: '13px', fontWeight: 700, color: fg, letterSpacing: '0.02em' }}>Decommission</span>
                   <span style={{ fontSize: '10px', color: fgMuted, background: cardBg, padding: '2px 8px', borderRadius: '10px', border: `1px solid ${border}` }}>{decomGroup.length} {decomGroup.length === 1 ? 'location' : 'locations'}</span>
@@ -6227,7 +6695,7 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
                   const lastNote = (notes[lease.id] ?? [])[0];
                   const logo = clientLogos[lease.tenant];
                   return (
-                    <div key={`decom-${lease.id}`} style={{ border: `1px solid ${decomBorder}`, borderLeft: `4px solid ${decomColor}`, borderRadius: '8px', padding: '16px', marginBottom: '12px', background: decomCardBg }}>
+                    <div key={`decom-${lease.id}`} className="pr-card" style={{ border: `1px solid ${decomBorder}`, borderLeft: `4px solid ${decomColor}`, borderRadius: '8px', padding: '16px', marginBottom: '12px', background: decomCardBg }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           {logo && <img src={logo} alt={lease.tenant} style={{ height: '24px', maxWidth: '100px', objectFit: 'contain' }} />}
@@ -6263,7 +6731,7 @@ function PrintReportModal({ leases, notes, clientLogos, portfolioName, dashboard
                     </div>
                   );
                 })}
-              </>
+              </div>
             )}
 
             {/* Footer */}
@@ -6287,8 +6755,30 @@ function getTabFromHash(): string {
   return params.get('tab') || 'leases';
 }
 
-export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'owner' | 'editor' | 'viewer' }) {
+export default function PortfolioTracker({
+  userRole = 'owner',
+  portfolioId = 1,
+  portfolioName: portfolioNameProp = 'Learfield Portfolio',
+  currentUserName = 'Jordan Wade',
+  portfolioLogo,
+}: {
+  userRole?: 'owner' | 'editor' | 'viewer';
+  portfolioId?: number;
+  portfolioName?: string;
+  currentUserName?: string;
+  portfolioLogo?: string;
+}) {
   const readOnly = userRole === 'viewer';
+  // ── Per-portfolio storage isolation ─────────────────────────────────────────
+  // Portfolio #1 keeps the original un-suffixed keys (all existing data stays
+  // exactly where it is). Every other portfolio reads/writes its own suffixed
+  // keys, so no portfolio can ever overwrite another's data.
+  const pk = (base: string) => portfolioId === 1 ? base : `${base}__p${portfolioId}`;
+  // Only the original portfolio is seeded with the Learfield dataset; new
+  // portfolios start clean — no placeholder properties, notes, or QBR entries.
+  const isSeedPortfolio = portfolioId === 1;
+  // Tracked-category configuration chosen when this portfolio was created.
+  const trackedFields = useMemo(() => readTrackedFields(portfolioId), [portfolioId]);
   const [tab, setTab] = useState<string>(getTabFromHash);
 
   // Listen for hash changes (e.g. sidebar clicks, back/forward)
@@ -6298,40 +6788,61 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  // Header search → open the selected building's profile
+  useEffect(() => {
+    const onOpenProfile = (e: Event) => {
+      const id = (e as CustomEvent<{ leaseId: number }>).detail?.leaseId;
+      if (typeof id === 'number') setProfileId(id);
+    };
+    window.addEventListener('cre:open-profile', onOpenProfile as EventListener);
+    return () => window.removeEventListener('cre:open-profile', onOpenProfile as EventListener);
+  }, []);
+
   // Shared state
   const [leasesData, setLeasesData] = usePersistedState<LeaseRecord[]>(
-    'cre_leases',
-    [...leasesInit].sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1)
+    pk('cre_leases'),
+    isSeedPortfolio ? [...leasesInit].sort((a, b) => a.leaseEnd < b.leaseEnd ? -1 : 1) : []
   );
-  const [notes,     setNotes]     = usePersistedState<Record<number, LeaseNote[]>>('cre_lease_notes', initialLeaseNotes);
+  const [notes,     setNotes]     = usePersistedState<Record<number, LeaseNote[]>>(pk('cre_lease_notes'), isSeedPortfolio ? initialLeaseNotes : {});
   // Heavy keys (data URLs for documents/photos) move to IndexedDB so they don't blow the ~5 MB localStorage cap.
   // Photos, documents, and logos use split-record persistence so each
   // lease (or client) is stored under its own IDB key. That keeps every
   // save tiny no matter how much data is already in storage.
-  const [documents, setDocuments] = useIDBSplitRecordState<LeaseDocument[]>('cre_lease_documents', initialLeaseDocuments as unknown as Record<string, LeaseDocument[]>) as unknown as [Record<number, LeaseDocument[]>, React.Dispatch<React.SetStateAction<Record<number, LeaseDocument[]>>>];
-  const [photos,    setPhotos]    = useIDBSplitRecordState<LeasePhoto[]>('cre_lease_photos', PLACEHOLDER_PHOTOS as unknown as Record<string, LeasePhoto[]>) as unknown as [Record<number, LeasePhoto[]>, React.Dispatch<React.SetStateAction<Record<number, LeasePhoto[]>>>];
-  const [qbrEntries, setQbrEntries] = usePersistedState<QBREntry[]>('cre_qbr_entries', INITIAL_QBR_ENTRIES);
-  const [manualDates, setManualDates] = usePersistedState<Record<number, string>>('cre_manual_dates', {});
+  const [documents, setDocuments] = useIDBSplitRecordState<LeaseDocument[]>(pk('cre_lease_documents'), (isSeedPortfolio ? initialLeaseDocuments : {}) as unknown as Record<string, LeaseDocument[]>) as unknown as [Record<number, LeaseDocument[]>, React.Dispatch<React.SetStateAction<Record<number, LeaseDocument[]>>>];
+  const [photos,    setPhotos]    = useIDBSplitRecordState<LeasePhoto[]>(pk('cre_lease_photos'), (isSeedPortfolio ? PLACEHOLDER_PHOTOS : {}) as unknown as Record<string, LeasePhoto[]>) as unknown as [Record<number, LeasePhoto[]>, React.Dispatch<React.SetStateAction<Record<number, LeasePhoto[]>>>];
+  const [qbrEntries, setQbrEntries] = usePersistedState<QBREntry[]>(pk('cre_qbr_entries'), isSeedPortfolio ? INITIAL_QBR_ENTRIES : []);
+  const [manualDates, setManualDates] = usePersistedState<Record<number, string>>(pk('cre_manual_dates'), {});
   const [profileId,   setProfileId]   = useState<number | null>(null);
   const [slideDeckOpen, setSlideDeckOpen] = useState(false);
-  const [clientLogos, setClientLogos] = useIDBSplitRecordState<string>('cre_client_logos', INITIAL_CLIENT_LOGOS);
+  const [clientLogos, setClientLogos] = useIDBSplitRecordState<string>(pk('cre_client_logos'), isSeedPortfolio ? INITIAL_CLIENT_LOGOS : {});
   const [printReportOpen, setPrintReportOpen] = useState(false);
   const [snapshotOpen, setSnapshotOpen] = useState(false);
-  const [portfolioName, setPortfolioName] = useState('Learfield Portfolio');
+  const portfolioName = portfolioNameProp;
   const [massUploadOpen, setMassUploadOpen] = useState(false);
   const [massDeleteOpen, setMassDeleteOpen] = useState(false);
   const [addPropertyOpen, setAddPropertyOpen] = useState(false);
   const [mappingTemplates, setMappingTemplates] = useState<MappingTemplate[]>([]);
-  const { globalLogo: dashboardLogo, setGlobalLogo: setDashboardLogo } = useBranding();
-  const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>('cre_milestones', {});
+  const { globalLogo: customBrandLogo, setGlobalLogo: setDashboardLogo } = useBranding();
+  // Default logo everywhere (tabs, reports, exports): the portfolio's own logo
+  // (as shown on its portal card at sign-in). A custom logo uploaded in
+  // Branding Settings still takes priority when set.
+  const dashboardLogo = customBrandLogo || portfolioLogo || '';
+  const [milestones, setMilestones] = usePersistedState<Record<number, Milestone[]>>(pk('cre_milestones'), {});
   // Stage durations (weeks) per lease, keyed by stage label. Used to auto-generate
   // milestone dates from lease.leaseStart for any active lease (PM or non-PM strategies).
   // Stage label is unique within a strategy so we just key by name.
-  const [pmStagePlans, setPMStagePlans] = usePersistedState<Record<number, Record<string, number>>>('cre_pm_stage_plans', {});
+  const [pmStagePlans, setPMStagePlans] = usePersistedState<Record<number, Record<string, number>>>(pk('cre_pm_stage_plans'), {});
   // Editable Critical Items notes per lease (PM + Decommission tabs). Plain text keyed by lease id.
-  const [criticalItems, setCriticalItems] = usePersistedState<Record<number, string>>('cre_critical_items', {});
+  const [criticalItems, setCriticalItems] = usePersistedState<Record<number, string>>(pk('cre_critical_items'), {});
   // Real Estate Decommission Check List + Surrender Requirements + Services to Terminate, keyed by lease id.
-  const [decomData, setDecomData] = usePersistedState<Record<number, DecomData>>('cre_decom_data', {});
+  const [decomData, setDecomData] = usePersistedState<Record<number, DecomData>>(pk('cre_decom_data'), {});
+  // Lead/report-owner roster — seeded only for the original portfolio.
+  const [clientLeads, setClientLeads] = usePersistedState<string[]>(pk('cre_client_leads'), isSeedPortfolio ? CLIENT_LEADS : []);
+  const addClientLead = (name: string) => {
+    const n = name.trim();
+    if (!n) return;
+    setClientLeads(prev => prev.includes(n) ? prev : [...prev, n].sort((a, b) => a.localeCompare(b)));
+  };
   const updateDecomData = (leaseId: number, next: DecomData) =>
     setDecomData(prev => ({ ...prev, [leaseId]: next }));
   // Whether to show the Decommission top chart (InitiativesModule). Default collapsed per user request.
@@ -6434,8 +6945,8 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   const updateLease = (updated: LeaseRecord) =>
     setLeasesData(prev => prev.map(l => l.id === updated.id ? updated : l));
 
-  const addNote = (leaseId: number, text: string, author: string) => {
-    const note: LeaseNote = { id: Date.now(), date: new Date().toISOString().slice(0,10), author, text };
+  const addNote = (leaseId: number, text: string, author: string, track?: 'Initiative' | 'Project Mgmt') => {
+    const note: LeaseNote = { id: Date.now(), date: new Date().toISOString().slice(0,10), author, text, ...(track ? { track } : {}) };
     setNotes(prev => ({ ...prev, [leaseId]: [note, ...(prev[leaseId] ?? [])] }));
   };
 
@@ -6537,6 +7048,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
   };
 
   return (
+    <LeadsContext.Provider value={{ leads: clientLeads, addLead: addClientLead }}>
     <div className="p-6 space-y-4">
       {/* View-only banner for viewers */}
       {readOnly && (
@@ -6555,7 +7067,8 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           documents={documents[profileLease.id] ?? []}
           photos={photos[profileLease.id] ?? []}
           clientLogo={clientLogos[profileLease.tenant] ?? ''}
-          onAddNote={(text, author) => addNote(profileLease.id, text, author)}
+          onAddNote={(text, author, track) => addNote(profileLease.id, text, author, track)}
+          currentUserName={currentUserName}
           onAddDocument={doc => addDocument(profileLease.id, doc)}
           onRemoveDocument={docId => removeDocument(profileLease.id, docId)}
           onAddPhoto={(label, category, url) => addPhoto(profileLease.id, label, category, url)}
@@ -6630,6 +7143,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         <MassUploadModal
           onImport={handleMassImport}
           onClose={() => setMassUploadOpen(false)}
+          trackedFields={trackedFields}
           savedTemplates={mappingTemplates}
           onSaveTemplate={(t) => setMappingTemplates(prev => {
             const idx = prev.findIndex(p => p.name === t.name);
@@ -6738,15 +7252,15 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsList>
 
         <TabsContent value="leases" className="mt-4">
-          <LeasesModule data={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onMassUpload={() => setMassUploadOpen(true)} onMassDelete={() => setMassDeleteOpen(true)} onAddProperty={() => setAddPropertyOpen(true)} readOnly={readOnly} />
+          <LeasesModule data={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onMassUpload={() => setMassUploadOpen(true)} onMassDelete={() => setMassDeleteOpen(true)} onAddProperty={() => setAddPropertyOpen(true)} readOnly={readOnly} trackedFields={trackedFields} />
         </TabsContent>
 
         <TabsContent value="initiatives" className="mt-4">
-          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="all" />
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="all" onAddNote={(leaseId, text, track) => addNote(leaseId, text, currentUserName, track)} />
         </TabsContent>
 
         <TabsContent value="pm" className="mt-4">
-          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="pm" />
+          <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="pm" onAddNote={(leaseId, text, track) => addNote(leaseId, text, currentUserName, track)} />
         </TabsContent>
 
         <TabsContent value="decom" className="mt-4">
@@ -6772,7 +7286,7 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
           </div>
           {showDecomTable && (
             <div className="mb-4">
-              <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" />
+              <InitiativesModule allLeases={leasesData} notes={notes} onUpdate={updateLease} onViewProfile={setProfileId} onShareSnapshot={() => setSnapshotOpen(true)} milestones={milestones} criticalItems={criticalItems} onSetCriticalItem={setCriticalItem} readOnly={readOnly} mode="decom" onAddNote={(leaseId, text, track) => addNote(leaseId, text, currentUserName, track)} />
             </div>
           )}
           <DecommissionChecklistModule
@@ -6804,5 +7318,6 @@ export default function PortfolioTracker({ userRole = 'owner' }: { userRole?: 'o
         </TabsContent>
       </Tabs>
     </div>
+    </LeadsContext.Provider>
   );
 }

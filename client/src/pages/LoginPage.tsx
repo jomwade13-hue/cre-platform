@@ -4,12 +4,36 @@ import { Input } from '@/components/ui/input';
 import { Building2, Eye, EyeOff, LogIn, Upload, X, Lock, Mail, Sun, Moon } from 'lucide-react';
 import { useTheme } from '@/components/Layout';
 
+export interface SessionUser {
+  id: number;
+  name: string;
+  email: string;
+}
+
 interface LoginPageProps {
-  onLogin: () => void;
+  onLogin: (user: SessionUser) => void;
 }
 
 const ADMIN_EMAIL = 'jomwade13@icloud.com';
 const ADMIN_PASS = 'H@nn@h123';
+const ADMIN_USER: SessionUser = { id: 1, name: 'Jordan Wade', email: ADMIN_EMAIL };
+
+/** Look up an invited user (created via the portfolio Invite flow) by email.
+ *  Invited users carry a `password` set when the invite was created. */
+function findInvitedUser(email: string, password: string): SessionUser | null {
+  try {
+    const raw = window.localStorage.getItem('cre_users');
+    if (!raw) return null;
+    const users = JSON.parse(raw);
+    if (!Array.isArray(users)) return null;
+    const u = users.find((x: any) => typeof x?.email === 'string' && x.email.toLowerCase() === email.toLowerCase());
+    if (!u) return null;
+    if (!u.password || u.password !== password) return null;
+    return { id: u.id, name: u.name, email: u.email };
+  } catch {
+    return null;
+  }
+}
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const { theme, toggle } = useTheme();
@@ -29,12 +53,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setLoading(true);
 
     setTimeout(() => {
-      if (email === ADMIN_EMAIL && password === ADMIN_PASS) {
-        onLogin();
-      } else {
-        setError('Invalid email or password. Please try again.');
-        setLoading(false);
+      if (email.trim().toLowerCase() === ADMIN_EMAIL && password === ADMIN_PASS) {
+        onLogin(ADMIN_USER);
+        return;
       }
+      const invited = findInvitedUser(email.trim(), password);
+      if (invited) {
+        onLogin(invited);
+        return;
+      }
+      setError('Invalid email or password. Please try again.');
+      setLoading(false);
     }, 600);
   };
 

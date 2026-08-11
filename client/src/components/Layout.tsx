@@ -1,4 +1,5 @@
-import { useState, useEffect, createContext, useContext } from 'react';
+import { useState, useEffect, useMemo, createContext, useContext } from 'react';
+import { usePersistedState } from '@/lib/usePersistedState';
 import { Link, useLocation } from 'wouter';
 import {
   Building2,
@@ -60,9 +61,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     if (theme === 'dark') document.documentElement.classList.add('dark');
   });
 
-  // Global branding state
-  const [globalLogo, setGlobalLogo] = useState('');
-  const [companyName, setCompanyName] = useState('');
+  // Global branding state — persisted so an uploaded logo survives reloads,
+  // sign-outs, and app updates instead of silently disappearing.
+  const [globalLogo, setGlobalLogo] = usePersistedState<string>('cre_dashboard_logo', '');
+  const [companyName, setCompanyName] = usePersistedState<string>('cre_company_name', '');
 
   return (
     <BrandingContext.Provider value={{ globalLogo, setGlobalLogo, companyName, setCompanyName }}>
@@ -369,6 +371,7 @@ interface HeaderProps {
   subtitle?: string;
   onLogout?: () => void;
   userRole?: PortfolioRole;
+  portfolioId?: number;
 }
 
 // ── Branding Settings Panel ───────────────────────────────────────────────────
@@ -486,10 +489,49 @@ function BrandingPanel({ open, onClose }: { open: boolean; onClose: () => void }
   );
 }
 
-export function Header({ title, subtitle, onLogout, userRole }: HeaderProps) {
+export function Header({ title, subtitle, onLogout, userRole, portfolioId = 1 }: HeaderProps) {
   const { theme, toggle } = useTheme();
   const [searchOpen, setSearchOpen] = useState(false);
   const [brandingOpen, setBrandingOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // ⌘K / Ctrl+K opens the search field
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+      if (e.key === 'Escape') setSearchOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Live results from this portfolio's own lease data
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    try {
+      const key = portfolioId === 1 ? 'cre_leases' : `cre_leases__p${portfolioId}`;
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return [];
+      return arr.filter((l: any) =>
+        (l.tenant || '').toLowerCase().includes(q) ||
+        (l.property || '').toLowerCase().includes(q) ||
+        (l.address || '').toLowerCase().includes(q) ||
+        (l.market || '').toLowerCase().includes(q)
+      ).slice(0, 8);
+    } catch { return []; }
+  }, [searchQuery, portfolioId]);
+
+  const openProfile = (leaseId: number) => {
+    window.dispatchEvent(new CustomEvent('cre:open-profile', { detail: { leaseId } }));
+    setSearchOpen(false);
+    setSearchQuery('');
+  };
 
   return (
     <header className="dashboard-header bg-card border-b border-border px-6 py-3 flex items-center gap-4 min-h-[60px]">
@@ -517,10 +559,34 @@ export function Header({ title, subtitle, onLogout, userRole }: HeaderProps) {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <Input
               autoFocus
-              placeholder="Search properties, leases, comps…"
+              placeholder="Search tenants, properties, addresses…"
               className="pl-9 pr-3 h-8 text-sm w-64"
-              onBlur={() => setSearchOpen(false)}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && searchResults.length > 0) openProfile(searchResults[0].id); }}
+              onBlur={() => setTimeout(() => { setSearchOpen(false); setSearchQuery(''); }, 150)}
+              data-testid="header-search-input"
             />
+            {searchQuery.trim() && (
+              <div className="absolute top-9 right-0 w-80 bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden" data-testid="header-search-results">
+                {searchResults.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-muted-foreground">No locations match "{searchQuery}"</p>
+                ) : searchResults.map((l: any) => (
+                  <button
+                    key={l.id}
+                    onMouseDown={e => { e.preventDefault(); openProfile(l.id); }}
+                    className="w-full text-left px-3 py-2 hover:bg-muted/60 transition-colors border-b border-border/50 last:border-0"
+                    data-testid={`header-search-result-${l.id}`}
+                  >
+                    <p className="text-xs font-semibold truncate">{l.tenant} — {l.property}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">{l.address || l.market || ''}</p>
+                  </button>
+                ))}
+                {searchResults.length > 0 && (
+                  <p className="px-3 py-1.5 text-[10px] text-muted-foreground bg-muted/30">Enter opens the top result</p>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <Button
@@ -624,20 +690,21 @@ export function Header({ title, subtitle, onLogout, userRole }: HeaderProps) {
 }
 
 // ── App Layout ────────────────────────────────────────────────────────────────
-export function AppLayout({ children, title, subtitle, onBackToPortal, onLogout, userRole }: {
+export function AppLayout({ children, title, subtitle, onBackToPortal, onLogout, userRole, portfolioId }: {
   children: React.ReactNode;
   title: string;
   subtitle?: string;
   onBackToPortal?: () => void;
   onLogout?: () => void;
   userRole?: PortfolioRole;
+  portfolioId?: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
     <div className="dashboard-layout">
       <Sidebar collapsed={collapsed} onCollapse={setCollapsed} onBackToPortal={onBackToPortal} onLogout={onLogout} />
-      <Header title={title} subtitle={subtitle} onLogout={onLogout} userRole={userRole} />
+      <Header title={title} subtitle={subtitle} onLogout={onLogout} userRole={userRole} portfolioId={portfolioId} />
       <main className="dashboard-main">
         {children}
       </main>

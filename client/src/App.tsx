@@ -4,31 +4,38 @@ import { queryClient } from '@/lib/queryClient';
 import { Toaster } from '@/components/ui/toaster';
 import { ThemeProvider, AppLayout } from '@/components/Layout';
 import PortfolioTracker from '@/pages/PortfolioTracker';
-import LoginPage from '@/pages/LoginPage';
+import LoginPage, { type SessionUser } from '@/pages/LoginPage';
 import ClientPortal, { type PortfolioRole } from '@/pages/ClientPortal';
 import { StorageRecoveryDialog } from '@/components/StorageRecoveryDialog';
 
 type AppScreen = 'login' | 'portal' | 'dashboard';
 
+interface SelectedPortfolio {
+  id: number;
+  name: string;
+  userRole: PortfolioRole;
+  logo?: string;
+}
+
 export default function App() {
   const [screen, setScreen] = useState<AppScreen>('login');
-  const [selectedPortfolio, setSelectedPortfolio] = useState<string>('');
-  const [userRole, setUserRole] = useState<PortfolioRole>('owner');
+  const [selectedPortfolio, setSelectedPortfolio] = useState<SelectedPortfolio | null>(null);
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
 
-  const handleLogin = () => {
+  const handleLogin = (user: SessionUser) => {
+    setSessionUser(user);
     setScreen('portal');
   };
 
-  const handleSelectPortfolio = (portfolio: { name: string; userRole: PortfolioRole }) => {
-    setSelectedPortfolio(portfolio.name);
-    setUserRole(portfolio.userRole);
+  const handleSelectPortfolio = (portfolio: { id: number; name: string; userRole: PortfolioRole; logo?: string }) => {
+    setSelectedPortfolio({ id: portfolio.id, name: portfolio.name, userRole: portfolio.userRole, logo: portfolio.logo });
     setScreen('dashboard');
   };
 
   const handleLogout = () => {
     setScreen('login');
-    setSelectedPortfolio('');
-    setUserRole('owner');
+    setSelectedPortfolio(null);
+    setSessionUser(null);
   };
 
   const handleBackToPortal = () => {
@@ -39,21 +46,31 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         {screen === 'login' && <LoginPage onLogin={handleLogin} />}
-        {screen === 'portal' && (
+        {screen === 'portal' && sessionUser && (
           <ClientPortal
+            currentUser={sessionUser}
             onSelectPortfolio={handleSelectPortfolio}
             onLogout={handleLogout}
           />
         )}
-        {screen === 'dashboard' && (
+        {screen === 'dashboard' && selectedPortfolio && (
           <AppLayout
-            title={selectedPortfolio || 'Portfolio Tracker'}
+            title={selectedPortfolio.name || 'Portfolio Tracker'}
             subtitle="Lease portfolio management & strategic planning"
             onBackToPortal={handleBackToPortal}
             onLogout={handleLogout}
-            userRole={userRole}
+            userRole={selectedPortfolio.userRole}
+            portfolioId={selectedPortfolio.id}
           >
-            <PortfolioTracker userRole={userRole} />
+            {/* key= forces a clean remount per portfolio so each one loads its own isolated data */}
+            <PortfolioTracker
+              key={selectedPortfolio.id}
+              portfolioId={selectedPortfolio.id}
+              portfolioName={selectedPortfolio.name}
+              userRole={selectedPortfolio.userRole}
+              currentUserName={sessionUser?.name ?? 'Jordan Wade'}
+              portfolioLogo={selectedPortfolio.logo}
+            />
           </AppLayout>
         )}
         <Toaster />

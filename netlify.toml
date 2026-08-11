@@ -1,0 +1,16 @@
+# Netlify configuration for the CRE Portfolio Platform.
+# Builds only the client (static SPA) — the Express server is not needed on
+# Netlify; it exists solely to serve these same static files on Railway.
+
+[build]
+  command = "npm run build:client"
+  publish = "dist/public"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA fallback — the app routes via URL hash, but this keeps deep links safe.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

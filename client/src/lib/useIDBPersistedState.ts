@@ -82,6 +82,21 @@ export async function idbDel(key: string): Promise<void> {
   } catch { /* noop */ }
 }
 
+/** Delete every IndexedDB kv entry whose key equals `prefix` or starts with
+ *  `prefix + '__'` (covers split-record `__index` / `__entry:` keys). Used when
+ *  a portfolio is deleted so only that portfolio's data is removed. */
+export async function idbDeleteByPrefix(prefix: string): Promise<number> {
+  try {
+    const db = await getDB();
+    const keys = (await db.getAllKeys(STORE_NAME)) as string[];
+    const targets = keys.filter(k => typeof k === 'string' && (k === prefix || k.startsWith(prefix + '__')));
+    for (const k of targets) await db.delete(STORE_NAME, k);
+    return targets.length;
+  } catch {
+    return 0;
+  }
+}
+
 /** Notify the app when an IDB write fails (typically quota-exceeded). UI
  *  components subscribe to surface a recovery dialog. */
 export interface IdbWriteFailureDetail {

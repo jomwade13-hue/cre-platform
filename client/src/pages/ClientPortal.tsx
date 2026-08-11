@@ -2,8 +2,8 @@ import { useState, useMemo, useEffect } from 'react';
 import {
   Building2, Plus, ChevronRight, Briefcase, MapPin, Clock, Users,
   Search, LogOut, Settings, Upload, X, Mail, Shield, ShieldCheck,
-  Eye, Edit3, Trash2, UserPlus, Crown, ChevronDown, Check, Copy,
-  MoreHorizontal, UserX, ArrowUpRight, Sun, Moon, History
+  Eye, Edit3, Trash2, UserPlus, Crown, ChevronDown, ChevronUp, Check, Copy,
+  MoreHorizontal, UserX, ArrowUpRight, Sun, Moon, History, GripVertical
 } from 'lucide-react';
 import { useTheme } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,8 @@ import {
 } from '@/components/ui/tooltip';
 import { DoubleClickToEdit } from '@/components/DoubleClickToEdit';
 import { usePersistedState } from '@/lib/usePersistedState';
+import { idbDeleteByPrefix } from '@/lib/useIDBPersistedState';
+import type { SessionUser } from './LoginPage';
 import { compressImageFile } from '@/lib/imageUtils';
 import { ImageIcon } from 'lucide-react';
 import { SearchWithSuggestions, type SuggestionItem } from '@/components/SearchWithSuggestions';
@@ -45,6 +47,8 @@ export interface PortfolioUser {
   initials: string;
   color: string;
   avatarUrl?: string;
+  /** Temporary password created by the Invite flow so this user can sign in. */
+  password?: string;
 }
 
 export interface PortfolioAssignment {
@@ -94,16 +98,10 @@ const SEED_ASSIGNMENTS: PortfolioAssignment[] = [
   { userId: 1, portfolioId: 1, role: 'owner',  invitedAt: '2025-01-15', invitedBy: 'System' },
   { userId: 2, portfolioId: 1, role: 'editor', invitedAt: '2025-03-01', invitedBy: 'Jordan Wade' },
   { userId: 3, portfolioId: 1, role: 'viewer', invitedAt: '2025-06-10', invitedBy: 'Jordan Wade' },
-  { userId: 1, portfolioId: 2, role: 'owner',  invitedAt: '2025-02-20', invitedBy: 'System' },
-  { userId: 4, portfolioId: 2, role: 'editor', invitedAt: '2025-04-05', invitedBy: 'Jordan Wade' },
-  { userId: 1, portfolioId: 3, role: 'owner',  invitedAt: '2025-05-12', invitedBy: 'System' },
-  { userId: 5, portfolioId: 3, role: 'viewer', invitedAt: '2025-07-01', invitedBy: 'Jordan Wade' },
 ];
 
 const INITIAL_PORTFOLIOS: ClientPortfolio[] = [
-  { id: 1, name: 'Learfield Portfolio',            clientName: 'Learfield Communications', locations: 166, totalSF: '389,572 SF',   market: 'National',  lastUpdated: 'Today',       status: 'Active', color: '#3B82F6' },
-  { id: 2, name: 'Midwest Industrial Fund',        clientName: 'Apex Capital Partners', locations: 32, totalSF: '4,200,000 SF', market: 'Midwest',   lastUpdated: '2 days ago',  status: 'Active', color: '#8B5CF6' },
-  { id: 3, name: 'Southeast Healthcare Portfolio',  clientName: 'MedCore Health Systems', locations: 18, totalSF: '680,000 SF',  market: 'Southeast', lastUpdated: '1 week ago',  status: 'Active', color: '#10B981' },
+  { id: 1, name: 'Learfield Portfolio', clientName: 'Learfield Communications', locations: 166, totalSF: '389,572 SF', market: 'National', lastUpdated: 'Today', status: 'Active', color: '#3B82F6' },
 ];
 
 const PORTFOLIO_COLORS = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899', '#6366F1'];
@@ -113,6 +111,83 @@ const AVATAR_COLORS    = ['#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444',
 
 function getInitials(name: string): string {
   return name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+}
+
+// ── Per-portfolio data isolation ─────────────────────────────────────────────
+// Portfolio #1 (the original Learfield portfolio) keeps the legacy un-suffixed
+// storage keys so existing data is untouched. Every other portfolio stores its
+// data under `<key>__p<portfolioId>` so portfolios never share or overwrite
+// each other's leases, notes, photos, or QBR entries.
+export function portfolioDataKey(base: string, portfolioId: number): string {
+  return portfolioId === 1 ? base : `${base}__p${portfolioId}`;
+}
+
+const PORTFOLIO_LOCAL_KEYS = [
+  'cre_leases', 'cre_lease_notes', 'cre_qbr_entries', 'cre_manual_dates',
+  'cre_milestones', 'cre_pm_stage_plans', 'cre_critical_items', 'cre_decom_data',
+  'cre_tracked_fields', 'cre_client_leads',
+] as const;
+const PORTFOLIO_IDB_KEYS = ['cre_lease_documents', 'cre_lease_photos', 'cre_client_logos'] as const;
+
+/** Read a portfolio's lease list straight from localStorage (no state coupling). */
+function readPortfolioLeases(portfolioId: number): any[] {
+  try {
+    const raw = window.localStorage.getItem(portfolioDataKey('cre_leases', portfolioId));
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch { return []; }
+}
+
+/** Permanently remove every stored data key belonging to a portfolio. */
+function purgePortfolioData(portfolioId: number): void {
+  try {
+    PORTFOLIO_LOCAL_KEYS.forEach(base => {
+      window.localStorage.removeItem(portfolioDataKey(base, portfolioId));
+    });
+  } catch { /* best-effort */ }
+  PORTFOLIO_IDB_KEYS.forEach(base => {
+    idbDeleteByPrefix(portfolioDataKey(base, portfolioId)).catch(() => { /* best-effort */ });
+  });
+}
+
+// ── Tracked categories (per-portfolio field configuration) ──────────────────
+export interface TrackedField { key: string; label: string; custom?: boolean }
+
+/** Standard categories available in the picklist — keys mirror lease record fields. */
+export const STANDARD_CATEGORIES: TrackedField[] = [
+  { key: 'tenant', label: 'Tenant' },
+  { key: 'property', label: 'Property' },
+  { key: 'address', label: 'Address' },
+  { key: 'sqft', label: 'SF' },
+  { key: 'rentPSF', label: 'Rent PSF' },
+  { key: 'totalRent', label: 'Annual Rent' },
+  { key: 'leaseStart', label: 'Lease Start' },
+  { key: 'leaseEnd', label: 'Lease Expiration' },
+  { key: 'type', label: 'Type' },
+  { key: 'clientLead', label: 'Client Lead' },
+  { key: 'status', label: 'Status' },
+  { key: 'strategy', label: 'Strategy' },
+  { key: 'stage', label: 'Stage' },
+  { key: 'market', label: 'Market' },
+  { key: 'submarket', label: 'Submarket' },
+  { key: 'floors', label: 'Floors' },
+  { key: 'broker', label: 'Broker' },
+  { key: 'lat', label: 'Latitude' },
+  { key: 'lng', label: 'Longitude' },
+  { key: 'costarId', label: 'CoStar ID' },
+  { key: 'recordId', label: 'Record ID' },
+];
+
+const DEFAULT_TRACKED_KEYS = ['tenant', 'property', 'address', 'sqft', 'leaseStart', 'leaseEnd', 'type', 'clientLead', 'status', 'strategy', 'stage', 'market'];
+export const DEFAULT_TRACKED_FIELDS: TrackedField[] = STANDARD_CATEGORIES.filter(c => DEFAULT_TRACKED_KEYS.includes(c.key));
+
+/** Generate a friendly temporary password for invited users. */
+function generateTempPassword(): string {
+  const words = ['Maple', 'Summit', 'Harbor', 'Crest', 'Atlas', 'Beacon', 'Quarry', 'Meridian'];
+  const w = words[Math.floor(Math.random() * words.length)];
+  const n = Math.floor(1000 + Math.random() * 9000);
+  return `${w}${n}`;
 }
 
 function getRoleBadge(role: PortfolioRole, size: 'sm' | 'md' = 'sm') {
@@ -136,30 +211,47 @@ function InviteModal({ portfolioId, portfolioName, existingUserIds, users, onInv
   portfolioName: string;
   existingUserIds: Set<number>;
   users: PortfolioUser[];
-  onInvite: (email: string, name: string, role: PortfolioRole) => void;
+  onInvite: (email: string, name: string, role: PortfolioRole) => { password?: string };
   onClose: () => void;
 }) {
   const [email, setEmail] = useState('');
   const [name, setName]   = useState('');
   const [role, setRole]   = useState<PortfolioRole>('viewer');
   const [sent, setSent]   = useState(false);
+  const [sentPassword, setSentPassword] = useState<string | undefined>(undefined);
+  const [credsCopied, setCredsCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
   // Check if the email matches a known user already in the portfolio
   const existingUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
   const alreadyAssigned = existingUser && existingUserIds.has(existingUser.id);
 
+  const appLink = typeof window !== 'undefined' ? window.location.origin + window.location.pathname : '';
+
   const handleInvite = () => {
     if (!email.trim()) return;
     const n = name.trim() || existingUser?.name || email.split('@')[0];
-    onInvite(email.trim(), n, role);
+    const result = onInvite(email.trim(), n, role);
+    setSentPassword(result?.password);
     setSent(true);
-    setTimeout(() => { setSent(false); setEmail(''); setName(''); setRole('viewer'); onClose(); }, 1200);
+  };
+
+  const credentialText = `You've been invited to the ${portfolioName} dashboard (${ROLE_CONFIG[role].label} access).\n\nOpen: ${appLink}\nEmail: ${email.trim().toLowerCase()}\nTemporary password: ${sentPassword ?? '(their existing password)'}`;
+
+  const handleCopyCreds = () => {
+    navigator.clipboard?.writeText(credentialText).catch(() => {});
+    setCredsCopied(true);
+    setTimeout(() => setCredsCopied(false), 2000);
+  };
+
+  const handleEmailDraft = () => {
+    const subject = encodeURIComponent(`Invitation: ${portfolioName} dashboard`);
+    const body = encodeURIComponent(credentialText);
+    window.location.href = `mailto:${email.trim()}?subject=${subject}&body=${body}`;
   };
 
   const handleCopyLink = () => {
-    const fakeLink = `https://app.transcendcre.com/invite/${portfolioId}?role=${role}`;
-    navigator.clipboard?.writeText(fakeLink).catch(() => {});
+    navigator.clipboard?.writeText(appLink).catch(() => {});
     setLinkCopied(true);
     setTimeout(() => setLinkCopied(false), 2000);
   };
@@ -175,12 +267,28 @@ function InviteModal({ portfolioId, portfolioName, existingUserIds, users, onInv
         </DialogHeader>
 
         {sent ? (
-          <div className="py-8 text-center">
+          <div className="py-6 text-center">
             <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-500/20 flex items-center justify-center mx-auto mb-3">
               <Check className="w-6 h-6 text-green-600 dark:text-green-400" />
             </div>
-            <p className="text-sm font-medium text-slate-900 dark:text-white">Invitation Sent</p>
-            <p className="text-xs text-slate-500 dark:text-white/40 mt-1">{email} has been invited as {ROLE_CONFIG[role].label}</p>
+            <p className="text-sm font-medium text-slate-900 dark:text-white">Access Created</p>
+            <p className="text-xs text-slate-500 dark:text-white/40 mt-1">{email} now has {ROLE_CONFIG[role].label} access to {portfolioName}.</p>
+            <div className="mt-4 text-left bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/[0.08] rounded-lg p-3 space-y-1">
+              <p className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-white/30">Sign-in details to share</p>
+              <p className="text-xs text-slate-700 dark:text-white/70">Link: <span className="font-medium break-all">{appLink}</span></p>
+              <p className="text-xs text-slate-700 dark:text-white/70">Email: <span className="font-medium">{email.trim().toLowerCase()}</span></p>
+              <p className="text-xs text-slate-700 dark:text-white/70">Password: <span className="font-mono font-semibold">{sentPassword ?? 'uses their existing password'}</span></p>
+            </div>
+            <div className="flex justify-center gap-2 mt-4">
+              <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={handleCopyCreds} data-testid="button-copy-credentials">
+                {credsCopied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                {credsCopied ? 'Copied' : 'Copy Details'}
+              </Button>
+              <Button size="sm" className="h-8 text-xs gap-1.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white" onClick={handleEmailDraft} data-testid="button-email-invite">
+                <Mail className="w-3 h-3" />Email Invite
+              </Button>
+              <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={onClose}>Done</Button>
+            </div>
           </div>
         ) : (
           <div className="space-y-4 mt-2">
@@ -398,11 +506,13 @@ function ManageTeamModal({ portfolioId, portfolioName, users, assignments, onCha
 // ── Main Component ───────────────────────────────────────────────────────────
 
 interface ClientPortalProps {
+  currentUser: SessionUser;
   onSelectPortfolio: (portfolio: ClientPortfolio & { userRole: PortfolioRole }) => void;
   onLogout: () => void;
 }
 
-export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPortalProps) {
+export default function ClientPortal({ currentUser, onSelectPortfolio, onLogout }: ClientPortalProps) {
+  const isAdmin = currentUser.email.toLowerCase() === CURRENT_USER.email.toLowerCase();
   const { theme, toggle } = useTheme();
   const isDark = theme === 'dark';
   const [portfolios, setPortfolios]       = usePersistedState<ClientPortfolio[]>('cre_portfolios', INITIAL_PORTFOLIOS);
@@ -413,6 +523,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   // every portfolio. Promotes any stale viewer/editor records, and adds
   // missing assignments so newly seeded portfolios are also owned.
   useEffect(() => {
+    if (!isAdmin) return;
     setAssignments(prev => {
       let changed = false;
       const next = prev.map(a => {
@@ -442,95 +553,6 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolios.length]);
 
-  // One-time recovery: if a seeded portfolio (Learfield, Midwest, Southeast)
-  // was accidentally deleted, restore it on next load. Underlying lease data
-  // for the Learfield Portfolio still lives in cre_leases / IndexedDB, so the
-  // portfolio card just needs to be re-added to the list. This runs once per
-  // browser (gated by a localStorage flag) so the user can still intentionally
-  // delete a seed portfolio later if they want to.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const RECOVERY_KEY = 'cre_seed_portfolio_recovery_v1';
-    if (window.localStorage.getItem(RECOVERY_KEY) === 'done') return;
-    setPortfolios(prev => {
-      const byId = new Map(prev.map(p => [p.id, p]));
-      let changed = false;
-      // Recompute Learfield stats from cre_leases so the card reflects reality.
-      let learfieldStats: { locations: number; totalSF: string } | null = null;
-      try {
-        const raw = window.localStorage.getItem('cre_leases');
-        if (raw) {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr) && arr.length > 0) {
-            const totalSf = arr.reduce((s: number, l: any) => s + (Number(l?.sf) || 0), 0);
-            learfieldStats = {
-              locations: arr.length,
-              totalSF: `${totalSf.toLocaleString()} SF`,
-            };
-          }
-        }
-      } catch { /* ignore */ }
-      INITIAL_PORTFOLIOS.forEach(seed => {
-        if (!byId.has(seed.id)) {
-          const restored: ClientPortfolio = seed.id === 1 && learfieldStats
-            ? { ...seed, locations: learfieldStats.locations, totalSF: learfieldStats.totalSF, lastUpdated: 'Restored' }
-            : { ...seed, lastUpdated: 'Restored' };
-          byId.set(seed.id, restored);
-          changed = true;
-        }
-      });
-      window.localStorage.setItem(RECOVERY_KEY, 'done');
-      return changed ? Array.from(byId.values()) : prev;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // One-time recovery: rebuild the user's custom "Learfield Portfolio (Custom)"
-  // card. The portfolio card itself was deleted, but all underlying lease data,
-  // notes, photos, floor plans, and PDF documents live in app-wide storage keys
-  // (cre_leases, cre_lease_notes, cre_lease_photos, cre_lease_documents,
-  // cre_milestones, cre_manual_dates) and were never touched by the delete
-  // handler. Re-adding the portfolio card surfaces all of that content again.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const KEY = 'cre_custom_portfolio_recovery_v1';
-    if (window.localStorage.getItem(KEY) === 'done') return;
-    setPortfolios(prev => {
-      // Don't double-add if a card with this name already exists.
-      if (prev.some(p => p.name === 'Learfield Portfolio (Custom)')) {
-        window.localStorage.setItem(KEY, 'done');
-        return prev;
-      }
-      // Compute fresh stats from cre_leases (all your custom data).
-      let locations = 0;
-      let totalSF = '0 SF';
-      try {
-        const raw = window.localStorage.getItem('cre_leases');
-        if (raw) {
-          const arr = JSON.parse(raw);
-          if (Array.isArray(arr)) {
-            locations = arr.length;
-            const totalSf = arr.reduce((s: number, l: any) => s + (Number(l?.sf) || 0), 0);
-            totalSF = `${totalSf.toLocaleString()} SF`;
-          }
-        }
-      } catch { /* ignore */ }
-      const restored: ClientPortfolio = {
-        id: Date.now(),
-        name: 'Learfield Portfolio (Custom)',
-        clientName: 'Learfield Communications',
-        locations,
-        totalSF,
-        market: 'National',
-        lastUpdated: 'Restored',
-        status: 'Active',
-        color: '#10B981',
-      };
-      window.localStorage.setItem(KEY, 'done');
-      return [...prev, restored];
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   const [search, setSearch]               = useState('');
   const [showAddModal, setShowAddModal]   = useState(false);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
@@ -538,6 +560,45 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   const [newClient, setNewClient]         = useState('');
   const [newMarket, setNewMarket]         = useState('');
   const [newLogo, setNewLogo]             = useState<string>('');
+  const [newTrackedFields, setNewTrackedFields] = useState<TrackedField[]>(DEFAULT_TRACKED_FIELDS);
+  const [newCustomField, setNewCustomField]     = useState('');
+
+  const addTrackedField = (f: TrackedField) =>
+    setNewTrackedFields(prev => prev.some(x => x.key === f.key) ? prev : [...prev, f]);
+  const removeTrackedField = (key: string) =>
+    setNewTrackedFields(prev => prev.filter(f => f.key !== key));
+  const moveTrackedField = (key: string, dir: -1 | 1) =>
+    setNewTrackedFields(prev => {
+      const i = prev.findIndex(f => f.key === key);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  // Drag-and-drop reordering for the tracked-categories list
+  const [dragFieldKey, setDragFieldKey] = useState<string | null>(null);
+  const handleFieldDragOver = (overKey: string) => {
+    if (!dragFieldKey || dragFieldKey === overKey) return;
+    setNewTrackedFields(prev => {
+      const from = prev.findIndex(f => f.key === dragFieldKey);
+      const to = prev.findIndex(f => f.key === overKey);
+      if (from < 0 || to < 0 || from === to) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+
+  const addCustomTrackedField = () => {
+    const label = newCustomField.trim();
+    if (!label) return;
+    const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!slug) return;
+    addTrackedField({ key: `custom_${slug}`, label, custom: true });
+    setNewCustomField('');
+  };
   const [logo, setLogo]                   = useState<string>('/transwestern-logo-primary.png');
   const [invitePortfolioId, setInvitePortfolioId] = useState<number | null>(null);
   const [teamPortfolioId, setTeamPortfolioId]     = useState<number | null>(null);
@@ -547,17 +608,32 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   // and would overwrite the seed leases written by PortfolioTracker.
   const leasesData = useMemo<PortalLease[]>(() => {
     if (typeof window === 'undefined') return [];
-    try {
-      const raw = window.localStorage.getItem('cre_leases');
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr : [];
-    } catch { return []; }
-  // Re-read whenever search changes — ensures latest data after returning from a portfolio.
+    const all: PortalLease[] = [];
+    portfolios.forEach(p => { readPortfolioLeases(p.id).forEach(l => all.push(l)); });
+    return all;
+  // Re-read whenever search or the portfolio list changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search, portfolios]);
 
-  const filtered = portfolios.filter(p => {
+  // Live per-portfolio stats (location count + total SF) computed from each
+  // portfolio's own isolated lease data — always current, never stale.
+  const portfolioStats = useMemo<Record<number, { locations: number; totalSF: string }>>(() => {
+    const out: Record<number, { locations: number; totalSF: string }> = {};
+    portfolios.forEach(p => {
+      const leases = readPortfolioLeases(p.id);
+      const sf = leases.reduce((sum: number, l: any) => sum + (Number(l?.sqft) || 0), 0);
+      out[p.id] = { locations: leases.length, totalSF: `${sf.toLocaleString()} SF` };
+    });
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolios, search]);
+
+  // Invited (non-admin) users only see portfolios they've been given access to.
+  const visiblePortfolios = isAdmin
+    ? portfolios
+    : portfolios.filter(p => assignments.some(a => a.portfolioId === p.id && a.userId === currentUser.id));
+
+  const filtered = visiblePortfolios.filter(p => {
     const q = search.toLowerCase();
     if (!q) return true;
     if (p.name.toLowerCase().includes(q)) return true;
@@ -593,11 +669,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     }).filter(Boolean) as (PortfolioUser & { role: PortfolioRole })[];
   };
   const getCurrentUserRole = (pid: number): PortfolioRole => {
-    const a = assignments.find(a => a.portfolioId === pid && a.userId === CURRENT_USER.id);
-    // The admin account (jomwade13@icloud.com) is always the owner. If no assignment
-    // exists yet — or a stale viewer record is cached — return 'owner' so edit
-    // capabilities aren't blocked.
-    return a?.role ?? 'owner';
+    const a = assignments.find(a => a.portfolioId === pid && a.userId === currentUser.id);
+    // The admin account is always the owner; invited users fall back to viewer
+    // until an assignment says otherwise.
+    return a?.role ?? (isAdmin ? 'owner' : 'viewer');
   };
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -608,6 +683,8 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
   const handleDeletePortfolio = (id: number) => {
     setPortfolios(prev => prev.filter(p => p.id !== id));
     setAssignments(prev => prev.filter(a => a.portfolioId !== id));
+    // Remove only THIS portfolio's data keys — other portfolios are untouched.
+    purgePortfolioData(id);
     setDeletePortfolioId(null);
   };
 
@@ -647,28 +724,42 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
     setPortfolios(prev => [...prev, newPortfolio]);
     // Auto-assign creator as owner
     setAssignments(prev => [...prev, {
-      userId: CURRENT_USER.id,
+      userId: currentUser.id,
       portfolioId: newId,
       role: 'owner' as PortfolioRole,
       invitedAt: new Date().toISOString().slice(0, 10),
       invitedBy: 'System',
     }]);
+    // Save this portfolio's tracked-category configuration (drives its columns
+    // and the mass-import field list, in this exact order).
+    try {
+      window.localStorage.setItem(`cre_tracked_fields__p${newId}`, JSON.stringify(newTrackedFields));
+    } catch { /* best-effort */ }
     setNewName(''); setNewClient(''); setNewMarket(''); setNewLogo('');
+    setNewTrackedFields(DEFAULT_TRACKED_FIELDS); setNewCustomField('');
     setShowAddModal(false);
   };
 
-  const handleInvite = (portfolioId: number, email: string, name: string, role: PortfolioRole) => {
+  const handleInvite = (portfolioId: number, email: string, name: string, role: PortfolioRole): { password?: string } => {
     // Check if user already exists
     let user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    let password: string | undefined = user?.password;
     if (!user) {
+      password = generateTempPassword();
       user = {
         id: Date.now(),
         name,
         email: email.toLowerCase(),
         initials: getInitials(name),
         color: AVATAR_COLORS[users.length % AVATAR_COLORS.length],
+        password,
       };
       setUsers(prev => [...prev, user!]);
+    } else if (!user.password) {
+      // Existing user without a password (e.g. seeded) — give them one now.
+      password = generateTempPassword();
+      const uid = user.id;
+      setUsers(prev => prev.map(u => u.id === uid ? { ...u, password } : u));
     }
     // Add assignment
     setAssignments(prev => {
@@ -679,9 +770,10 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
         portfolioId,
         role,
         invitedAt: new Date().toISOString().slice(0, 10),
-        invitedBy: CURRENT_USER.name,
+        invitedBy: currentUser.name,
       }];
     });
+    return { password };
   };
 
   const handleChangeRole = (portfolioId: number, userId: number, newRole: PortfolioRole) => {
@@ -747,14 +839,14 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-8 gap-2 text-slate-700 hover:text-slate-900 hover:bg-slate-100 dark:text-white/60 dark:hover:text-white dark:hover:bg-white/[0.06]">
-                  <Avatar className="w-6 h-6"><AvatarFallback className="bg-blue-500 text-white text-xs font-bold">JW</AvatarFallback></Avatar>
-                  <span className="text-xs hidden sm:inline">Jordan Wade</span>
+                  <Avatar className="w-6 h-6"><AvatarFallback className="bg-blue-500 text-white text-xs font-bold">{getInitials(currentUser.name)}</AvatarFallback></Avatar>
+                  <span className="text-xs hidden sm:inline">{currentUser.name}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-52">
                 <DropdownMenuLabel>
-                  <p className="font-semibold">Jordan Wade</p>
-                  <p className="text-xs font-normal text-muted-foreground">jomwade13@icloud.com</p>
+                  <p className="font-semibold">{currentUser.name}</p>
+                  <p className="text-xs font-normal text-muted-foreground">{currentUser.email}</p>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem><Settings className="w-3.5 h-3.5 mr-2" />Settings</DropdownMenuItem>
@@ -926,11 +1018,11 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                   <div className="grid grid-cols-3 gap-3">
                     <div className="flex items-center gap-1.5">
                       <MapPin className="w-3 h-3 text-slate-400 dark:text-white/25" />
-                      <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.locations} locations</span>
+                      <span className="text-xs text-slate-600 dark:text-white/50">{(portfolioStats[portfolio.id]?.locations ?? portfolio.locations)} locations</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Building2 className="w-3 h-3 text-slate-400 dark:text-white/25" />
-                      <span className="text-xs text-slate-600 dark:text-white/50">{portfolio.totalSF}</span>
+                      <span className="text-xs text-slate-600 dark:text-white/50">{portfolioStats[portfolio.id]?.totalSF ?? portfolio.totalSF}</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <Clock className="w-3 h-3 text-slate-400 dark:text-white/25" />
@@ -1003,7 +1095,7 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
       {/* Add Portfolio Modal */}
       {showAddModal && (
         <Dialog open onOpenChange={() => setShowAddModal(false)}>
-          <DialogContent className="max-w-md bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
+          <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto bg-white border-slate-200 text-slate-900 dark:bg-[hsl(222,47%,13%)] dark:border-white/[0.1] dark:text-white">
             <DialogHeader>
               <DialogTitle className="text-slate-900 dark:text-white flex items-center gap-2">
                 <Plus className="w-4 h-4 text-blue-500 dark:text-blue-400" />Add New Portfolio
@@ -1075,10 +1167,70 @@ export default function ClientPortal({ onSelectPortfolio, onLogout }: ClientPort
                   </label>
                 )}
               </div>
+              {/* Tracked categories — which fields this portfolio tracks, in order */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-slate-600 dark:text-white/50">Tracked Categories</label>
+                <p className="text-[10px] text-slate-500 dark:text-white/35">These become this portfolio's fields — the order here is also used for the mass-import spreadsheet. Drag rows (or use the arrows) to reorder.</p>
+                <div className="rounded-lg border border-slate-200 dark:border-white/[0.08] divide-y divide-slate-100 dark:divide-white/[0.05] max-h-52 overflow-y-auto">
+                  {newTrackedFields.map((f, i) => (
+                    <div
+                      key={f.key}
+                      draggable
+                      onDragStart={e => { setDragFieldKey(f.key); e.dataTransfer.effectAllowed = 'move'; }}
+                      onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; handleFieldDragOver(f.key); }}
+                      onDrop={e => { e.preventDefault(); setDragFieldKey(null); }}
+                      onDragEnd={() => setDragFieldKey(null)}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 bg-white dark:bg-transparent transition-colors ${dragFieldKey === f.key ? 'opacity-40 bg-blue-50 dark:bg-blue-500/10' : ''} ${dragFieldKey && dragFieldKey !== f.key ? 'cursor-grabbing' : ''}`}
+                      data-testid={`tracked-field-${f.key}`}
+                    >
+                      <span className="cursor-grab active:cursor-grabbing text-slate-300 hover:text-slate-500 dark:text-white/20 dark:hover:text-white/50 shrink-0" title="Drag to reorder" aria-label="Drag to reorder">
+                        <GripVertical className="w-3.5 h-3.5" />
+                      </span>
+                      <span className="text-[10px] tabular-nums text-slate-400 dark:text-white/30 w-4">{i + 1}</span>
+                      <span className="text-xs flex-1 text-slate-800 dark:text-white/80">{f.label}</span>
+                      {f.custom && <span className="text-[9px] px-1.5 py-px rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 font-medium">Custom</span>}
+                      <button onClick={() => moveTrackedField(f.key, -1)} disabled={i === 0}
+                        className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-800 dark:text-white/30 dark:hover:text-white disabled:opacity-20"
+                        title="Move up" data-testid={`tracked-up-${f.key}`}><ChevronUp className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => moveTrackedField(f.key, 1)} disabled={i === newTrackedFields.length - 1}
+                        className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-slate-800 dark:text-white/30 dark:hover:text-white disabled:opacity-20"
+                        title="Move down" data-testid={`tracked-down-${f.key}`}><ChevronDown className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => removeTrackedField(f.key)}
+                        className="w-5 h-5 flex items-center justify-center rounded text-slate-400 hover:text-red-500 dark:text-white/30 dark:hover:text-red-400"
+                        title="Remove" data-testid={`tracked-remove-${f.key}`}><X className="w-3 h-3" /></button>
+                    </div>
+                  ))}
+                  {newTrackedFields.length === 0 && (
+                    <p className="px-3 py-3 text-[11px] text-slate-400 dark:text-white/30">No categories yet — add from the picklist below.</p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Select value="" onValueChange={key => { const cat = STANDARD_CATEGORIES.find(c => c.key === key); if (cat) addTrackedField(cat); }}>
+                    <SelectTrigger className="h-8 text-xs flex-1 bg-slate-50 border-slate-200 dark:bg-white/[0.06] dark:border-white/[0.1]" data-testid="tracked-picklist">
+                      <SelectValue placeholder="Add a standard category…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STANDARD_CATEGORIES.filter(c => !newTrackedFields.some(f => f.key === c.key)).map(c => (
+                        <SelectItem key={c.key} value={c.key} className="text-xs">{c.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex gap-2">
+                  <Input placeholder="Or add a custom category, e.g. Parking Spaces" value={newCustomField}
+                    onChange={e => setNewCustomField(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addCustomTrackedField(); }}
+                    className="h-8 text-xs flex-1 bg-slate-50 border-slate-200 dark:bg-white/[0.06] dark:border-white/[0.1]" data-testid="input-custom-category" />
+                  <Button size="sm" variant="outline" className="h-8 text-xs" disabled={!newCustomField.trim()} onClick={addCustomTrackedField} data-testid="button-add-custom-category">
+                    <Plus className="w-3 h-3 mr-1" />Add
+                  </Button>
+                </div>
+              </div>
+
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-white/50 dark:hover:text-white dark:hover:bg-white/[0.06]" onClick={() => setShowAddModal(false)}>Cancel</Button>
                 <Button size="sm" className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white"
-                  onClick={handleAdd} disabled={!newName.trim()} data-testid="button-confirm-add-portfolio">
+                  onClick={handleAdd} disabled={!newName.trim() || newTrackedFields.length === 0} data-testid="button-confirm-add-portfolio">
                   <Plus className="w-3.5 h-3.5 mr-1.5" />Create Portfolio
                 </Button>
               </div>

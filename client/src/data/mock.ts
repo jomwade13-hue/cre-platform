@@ -1,10 +1,14 @@
 // ── TYPES ─────────────────────────────────────────────────────────────────────
 
+export type NoteTrack = 'Initiative' | 'Project Mgmt';
+
 export interface LeaseNote {
   id: number;
   date: string;
   author: string;
   text: string;
+  /** Which workflow the note belongs to. Untagged notes are general and show everywhere. */
+  track?: NoteTrack;
 }
 
 export interface LeaseDocument {
