@@ -152,6 +152,18 @@ const fieldToColKey = (k: string) => FIELD_TO_COLUMN_KEY[k] ?? k;
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type LeaseRecord = typeof leasesInit[0] & {
+  /** Fields aligned with the client's lease-admin export (Ad Hoc Expiration Report). */
+  division?: string;
+  manager?: string;
+  suite?: string;
+  rentType?: string;
+  baseRent?: number | string;
+  nextOptionEnd?: string;
+  renewalActionDate?: string;
+  terminationActionDate?: string;
+  restoration?: string;
+  landlordName?: string;
+  landlordCell?: string;
   /**
    * Optional extra workflow memberships. A location normally appears in Active
    * Initiatives via its Status and in Project Management via its Strategy —
@@ -780,6 +792,39 @@ function BuildingProfileModal({
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Lease Start</label>
                     <Input type="date" value={lease.leaseStart || ''} onChange={e => onUpdate({ ...lease, leaseStart: e.target.value })} className="h-8 text-xs tabular-nums" data-testid="edit-lease-start" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Lease & landlord details — columns from the lease-admin export */}
+              <div className="mt-3 pt-3 border-t border-border">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Lease &amp; Landlord Details</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {([
+                    ['Division', 'division', 'text'],
+                    ['Manager', 'manager', 'text'],
+                    ['Suite', 'suite', 'text'],
+                    ['Rent Type', 'rentType', 'text'],
+                    ['Base Rent (Monthly)', 'baseRent', 'text'],
+                    ['Next Option End Date', 'nextOptionEnd', 'date'],
+                    ['Renewal Action Date', 'renewalActionDate', 'date'],
+                    ['Termination Action Date', 'terminationActionDate', 'date'],
+                    ['Landlord Name', 'landlordName', 'text'],
+                    ['Landlord Cell', 'landlordCell', 'text'],
+                  ] as const).map(([label, field, kind]) => (
+                    <div key={field}>
+                      <label className="text-xs text-muted-foreground mb-1 block">{label}</label>
+                      <Input type={kind} value={String((lease as any)[field] ?? '')}
+                        onChange={e => onUpdate({ ...(lease as any), [field]: e.target.value } as LeaseRecord)}
+                        className={kind === 'date' ? 'h-8 text-xs tabular-nums' : 'h-8 text-xs'}
+                        data-testid={`edit-${field}`} />
+                    </div>
+                  ))}
+                  <div className="col-span-2 sm:col-span-3">
+                    <label className="text-xs text-muted-foreground mb-1 block">Restoration / Surrender — Description</label>
+                    <Textarea value={String((lease as any).restoration ?? '')}
+                      onChange={e => onUpdate({ ...(lease as any), restoration: e.target.value } as LeaseRecord)}
+                      className="text-xs min-h-[52px] resize-y" rows={2} data-testid="edit-restoration" />
                   </div>
                 </div>
               </div>
@@ -5237,9 +5282,13 @@ function ShareableSnapshotModal({ leases, notes, clientLogos, portfolioName, onC
 
 // ── Mass Upload Modal ─────────────────────────────────────────────────────────
 
-const CSV_TEMPLATE_FIELDS = ['Record ID','Custom Record ID','Tenant','Property','Address','SF','Rent PSF','Total Rent','Lease Start','Lease End','Type','Client Lead','Status','Strategy','Stage','Market','Submarket','Floors','Broker','Latitude','Longitude','CoStar ID'] as const;
+// Template columns mirror the client's lease-admin export ("Ad Hoc Expiration
+// Report") plus Tenant/Property naming columns. A file exported straight from
+// that system uploads with zero manual mapping.
+const CSV_TEMPLATE_FIELDS = ['Record ID','Division','Manager','Address','Suite','Floor','City','State or Province Name','Rentable Area','Rent Type','Base Rent','Cost / Rent Area (Curr Month)','Current Commencement','Expiration','Next Option End Date','Events: Renewal Action Date','Events: Termination Action Date','Restoration / Surrender - Description','Landlord Name','Landlord Cell','Latitude','Longitude'] as const;
 const CSV_FIELD_MAP: Record<string, keyof LeaseRecord> = {
-  'record id': 'id', 'tenant': 'tenant', 'property': 'property', 'address': 'address',
+  'record id': 'recordId' as keyof LeaseRecord, 'tenant': 'tenant', 'property': 'property', 'address': 'address',
+  'internal id': 'id',
   'sf': 'sqft', 'rent psf': 'rentPSF', 'total rent': 'totalRent',
   'lease start': 'leaseStart', 'lease end': 'leaseEnd', 'type': 'type',
   'client lead': 'clientLead', 'status': 'status', 'strategy': 'strategy',
@@ -5256,7 +5305,36 @@ const CSV_FIELD_MAP: Record<string, keyof LeaseRecord> = {
   'record_id': 'recordId' as keyof LeaseRecord,
   'external id': 'recordId' as keyof LeaseRecord,
   'external_id': 'recordId' as keyof LeaseRecord,
+  // ── Lease-admin export headers (Ad Hoc Expiration Report) ──
+  'division': 'division' as keyof LeaseRecord,
+  'manager': 'manager' as keyof LeaseRecord,
+  'suite': 'suite' as keyof LeaseRecord,
+  'floor': 'floors',
+  'city': 'market',
+  'state or province name': 'submarket',
+  'state': 'submarket',
+  'rentable area': 'sqft',
+  'rent type': 'rentType' as keyof LeaseRecord,
+  'current commencement': 'leaseStart',
+  'commencement': 'leaseStart',
+  'expiration': 'leaseEnd',
+  'next option end date': 'nextOptionEnd' as keyof LeaseRecord,
+  'events: renewal action date': 'renewalActionDate' as keyof LeaseRecord,
+  'renewal action date': 'renewalActionDate' as keyof LeaseRecord,
+  'events: termination action date': 'terminationActionDate' as keyof LeaseRecord,
+  'termination action date': 'terminationActionDate' as keyof LeaseRecord,
+  'restoration / surrender - description': 'restoration' as keyof LeaseRecord,
+  'landlord name': 'landlordName' as keyof LeaseRecord,
+  'landlord cell': 'landlordCell' as keyof LeaseRecord,
 };
+
+/** Fuzzy header matches for columns whose names vary by export month
+ *  (e.g. "Base Rent 08/2026") or punctuation ("Cost / Rent Area (Curr Month)"). */
+function fuzzyHeaderMatch(norm: string): keyof LeaseRecord | undefined {
+  if (norm.startsWith('base rent')) return 'baseRent' as keyof LeaseRecord;
+  if (norm.startsWith('cost / rent area') || norm.startsWith('cost/rent area')) return 'rentPSF';
+  return undefined;
+}
 
 /** All mappable target fields shown in the field-mapping dropdowns */
 const MAPPABLE_FIELDS: { key: keyof LeaseRecord; label: string }[] = [
@@ -5278,6 +5356,17 @@ const MAPPABLE_FIELDS: { key: keyof LeaseRecord; label: string }[] = [
   { key: 'submarket', label: 'Submarket' },
   { key: 'floors', label: 'Floors' },
   { key: 'broker', label: 'Broker' },
+  { key: 'division' as keyof LeaseRecord, label: 'Division' },
+  { key: 'manager' as keyof LeaseRecord, label: 'Manager' },
+  { key: 'suite' as keyof LeaseRecord, label: 'Suite' },
+  { key: 'rentType' as keyof LeaseRecord, label: 'Rent Type' },
+  { key: 'baseRent' as keyof LeaseRecord, label: 'Base Rent (Monthly)' },
+  { key: 'nextOptionEnd' as keyof LeaseRecord, label: 'Next Option End Date' },
+  { key: 'renewalActionDate' as keyof LeaseRecord, label: 'Renewal Action Date' },
+  { key: 'terminationActionDate' as keyof LeaseRecord, label: 'Termination Action Date' },
+  { key: 'restoration' as keyof LeaseRecord, label: 'Restoration / Surrender' },
+  { key: 'landlordName' as keyof LeaseRecord, label: 'Landlord Name' },
+  { key: 'landlordCell' as keyof LeaseRecord, label: 'Landlord Cell' },
   { key: 'lat', label: 'Latitude' },
   { key: 'lng', label: 'Longitude' },
   { key: 'costarId', label: 'CoStar ID' },
@@ -5594,7 +5683,7 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
       return;
     }
     const csv = CSV_TEMPLATE_FIELDS.join(',') + '\n' +
-      '1001,Acme Corp,Main Office,"123 Main St, Dallas TX",15000,28.50,427500,2024-01-01,2029-12-31,Office,Alisha Shields,Active Initiative,"Maintain / Renew","1. Plan and Program",Dallas,Uptown,"3,4","Jones Lang LaSalle",32.7884,-96.8005,8014567\n';
+      'US-TX-Dallas-01,164,Jane Smith,123 Main St,100,1st,Dallas,Texas,15000,Triple Net,35625,28.50,2024-01-01,2029-12-31,2029-06-30,2029-03-01,,Broom-clean condition,Acme Realty LLC,(214) 555-0142,32.7884,-96.8005\n';
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -5609,8 +5698,8 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
       // Tracked-category labels (incl. custom fields) match first…
       const tracked = effectiveFields.find(f => f.label.toLowerCase() === norm);
       if (tracked) { result.push({ csvCol: h, dbField: tracked.key }); return; }
-      // …then the standard alias map.
-      const match = CSV_FIELD_MAP[norm];
+      // …then the standard alias map, then fuzzy month-stamped headers.
+      const match = CSV_FIELD_MAP[norm] ?? fuzzyHeaderMatch(norm);
       if (match) result.push({ csvCol: h, dbField: match });
     });
     return result;
@@ -5643,8 +5732,19 @@ function MassUploadModal({ onImport, onClose, savedTemplates, onSaveTemplate, on
         } else if (field === 'lat' || field === 'lng') {
           const n = parseFloat(v.replace(/[^0-9.\-]/g, ''));
           if (!isNaN(n)) record[field] = n;
+        } else if (field === ('baseRent' as keyof LeaseRecord)) {
+          record[field] = parseFloat(v.replace(/[,$]/g, '')) || v;
         } else { record[field] = v; }
       });
+      // Files exported from lease-admin systems often have no Tenant/Property
+      // columns — derive readable names so imported rows aren't blank:
+      //   Tenant → "City (Record ID)"   Property → street address
+      if (!record.tenant) {
+        const city = record.market || '';
+        const rid = record.recordId || '';
+        record.tenant = city && rid ? `${city} (${rid})` : (city || rid || record.address || 'Imported Location');
+      }
+      if (!record.property) record.property = record.address || record.tenant;
       return { raw, parsed: record, errors } as UploadRow;
     });
   };

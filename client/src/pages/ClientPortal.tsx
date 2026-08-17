@@ -177,6 +177,17 @@ export const STANDARD_CATEGORIES: TrackedField[] = [
   { key: 'lng', label: 'Longitude' },
   { key: 'costarId', label: 'CoStar ID' },
   { key: 'recordId', label: 'Record ID' },
+  { key: 'division', label: 'Division' },
+  { key: 'manager', label: 'Manager' },
+  { key: 'suite', label: 'Suite' },
+  { key: 'rentType', label: 'Rent Type' },
+  { key: 'baseRent', label: 'Base Rent (Monthly)' },
+  { key: 'nextOptionEnd', label: 'Next Option End Date' },
+  { key: 'renewalActionDate', label: 'Renewal Action Date' },
+  { key: 'terminationActionDate', label: 'Termination Action Date' },
+  { key: 'restoration', label: 'Restoration / Surrender' },
+  { key: 'landlordName', label: 'Landlord Name' },
+  { key: 'landlordCell', label: 'Landlord Cell' },
 ];
 
 const DEFAULT_TRACKED_KEYS = ['tenant', 'property', 'address', 'sqft', 'leaseStart', 'leaseEnd', 'type', 'clientLead', 'status', 'strategy', 'stage', 'market'];
