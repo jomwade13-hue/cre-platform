@@ -7098,7 +7098,10 @@ export default function PortfolioTracker({
       const next = [...prev];
       rows.forEach(row => {
         if (row.id == null) return;
-        const existing = next.findIndex(l => l.id === row.id);
+        // Match by internal id — or by external Record ID so re-importing the
+        // same file updates locations instead of duplicating them.
+        const rid = (row as any).recordId;
+        const existing = next.findIndex(l => l.id === row.id || (!!rid && (l as any).recordId === rid));
         if (existing >= 0) {
           // Merge: only overwrite non-empty fields from CSV
           const merged = { ...next[existing] };
@@ -7107,30 +7110,31 @@ export default function PortfolioTracker({
           });
           next[existing] = merged;
         } else {
-          // New record — fill defaults for missing fields
+          // New record — carry EVERY mapped CSV field (including lease-admin
+          // extras like Division, Landlord, action dates), then fill defaults
+          // for anything the file didn't provide.
+          const provided: any = {};
+          Object.entries(row).forEach(([k, v]) => { if (v !== undefined && v !== '') provided[k] = v; });
           const newRecord: LeaseRecord = {
+            tenant: 'Unknown Tenant',
+            property: 'TBD',
+            address: '',
+            sqft: 0,
+            rentPSF: 0,
+            totalRent: 0,
+            leaseStart: '',
+            leaseEnd: '',
+            type: 'Office',
+            clientLead: '',
+            status: 'Active Initiative',
+            strategy: 'Maintain / Renew',
+            stage: STRATEGY_STAGES[provided.strategy ?? 'Maintain / Renew']?.[0] ?? '',
+            market: '',
+            submarket: '',
+            floors: '',
+            broker: '',
+            ...provided,
             id: row.id,
-            tenant: row.tenant ?? 'Unknown Tenant',
-            property: row.property ?? 'TBD',
-            address: row.address ?? '',
-            sqft: row.sqft ?? 0,
-            rentPSF: row.rentPSF ?? 0,
-            totalRent: row.totalRent ?? 0,
-            leaseStart: row.leaseStart ?? '',
-            leaseEnd: row.leaseEnd ?? '',
-            type: row.type ?? 'Office',
-            clientLead: row.clientLead ?? '',
-            status: row.status ?? 'Active Initiative',
-            strategy: row.strategy ?? 'Maintain / Renew',
-            stage: row.stage ?? (STRATEGY_STAGES[row.strategy ?? 'Maintain / Renew']?.[0] ?? ''),
-            market: row.market ?? '',
-            submarket: row.submarket ?? '',
-            floors: row.floors ?? '',
-            broker: row.broker ?? '',
-            ...(row.lat !== undefined ? { lat: row.lat } : {}),
-            ...(row.lng !== undefined ? { lng: row.lng } : {}),
-            ...(row.costarId !== undefined ? { costarId: row.costarId } : {}),
-            ...((row as any).recordId !== undefined ? { recordId: (row as any).recordId } : {}),
           } as LeaseRecord;
           next.push(newRecord);
         }
