@@ -32,6 +32,20 @@ export function usePersistedState<T>(
     }
   });
 
+  // Cross-tab + external-write sync: when another tab (or a restore) writes
+  // this key, adopt the new value instead of clobbering it with stale state.
+  // Without this, a second open tab would silently overwrite newer data with
+  // its old in-memory copy — the cause of "my changes got overridden" bugs.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== key || e.newValue == null) return;
+      try { setState(JSON.parse(e.newValue) as T); } catch { /* ignore malformed */ }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [key]);
+
   useEffect(() => {
     try {
       if (typeof window === 'undefined' || !window.localStorage) return;
